@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CropLabel</title>
+<style>
+  :root {
+    --bg:#12151c; --panel:#1b202b; --panel2:#232a38; --line:#323b4d;
+    --text:#e7ecf5; --dim:#93a0b4; --accent:#4f8cff; --ok:#3fbf6f;
+    --warn:#e6a23c; --crop:#37c837; --weed:#e63c3c; --soil:#8a6a4b;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text);
+         font:14px/1.45 "Segoe UI", system-ui, sans-serif; height:100vh;
+         display:flex; flex-direction:column; overflow:hidden; }
+  button { font:inherit; color:var(--text); background:var(--panel2);
+           border:1px solid var(--line); border-radius:8px; padding:7px 12px;
+           cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); font-weight:600; }
+  button.good { background:var(--ok); border-color:var(--ok); font-weight:600; }
+  button:disabled { opacity:.45; cursor:default; }
+  input[type=text], input[type=number], select {
+    background:#10141b; color:var(--text); border:1px solid var(--line);
+    border-radius:6px; padding:6px 8px; }
+  header { display:flex; align-items:center; gap:14px; padding:8px 14px;
+           background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { font-size:17px; }
+  header h1 span { color:var(--crop); }
+  .pill { padding:3px 10px; border-radius:999px; font-size:12px;
+          border:1px solid var(--line); color:var(--dim); }
+  .pill.on { color:#c6f5d8; border-color:var(--ok); }
+  .pill.err { color:#ffd2d2; border-color:var(--weed); }
+  #layout { flex:1; display:flex; min-height:0; }
+  #sidebar { width:250px; background:var(--panel); border-right:1px solid var(--line);
+             display:flex; flex-direction:column; }
+  #sidebar h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em;
+                color:var(--dim); padding:10px 12px 6px; }
+  #queue { flex:1; overflow-y:auto; padding:0 8px 12px; }
+  .grp { margin-bottom:6px; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .grp-head { padding:6px 10px; background:var(--panel2); cursor:pointer;
+              display:flex; justify-content:space-between; font-size:13px; }
+  .grp-items { display:none; padding:5px 8px; }
+  .grp.open .grp-items { display:block; }
+  .chip { display:flex; align-items:center; gap:6px; margin:2px 0;
+          padding:3px 8px; border-radius:6px; border:1px solid var(--line);
+          font-size:11.5px; cursor:pointer; background:#10141b;
+          white-space:nowrap; overflow:hidden; }
+  .chip:hover { border-color:var(--accent); }
+  .chip.sel { border-color:var(--accent); background:#1b2c4d; }
+  .dot { width:8px; height:8px; border-radius:50%; background:#5a6475; flex:none; }
+  .dot.reviewed { background:var(--ok); } .dot.auto { background:var(--accent); }
+  .dot.skipped { background:var(--warn); }
+  #batchBar { padding:6px 12px; font-size:12px; color:var(--dim);
+              border-top:1px solid var(--line); display:none; }
+  #batchBar.show { display:block; }
+  #main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  #toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+             padding:8px 12px; background:var(--panel); border-bottom:1px solid var(--line); }
+  .tgroup { display:flex; align-items:center; gap:4px; padding:4px 8px;
+            border:1px solid var(--line); border-radius:10px; }
+  .tgroup label.small { font-size:11px; color:var(--dim); margin-right:2px; }
+  .tool { min-width:36px; }
+  .tool.active { background:var(--accent); border-color:var(--accent); }
+  .clsbtn.active { font-weight:700; }
+  #canvasWrap { flex:1; position:relative; overflow:hidden; background:#05070a; }
+  #cv { position:absolute; inset:0; width:100%; height:100%; cursor:crosshair; }
+  #busy { position:absolute; inset:0; display:none; align-items:center;
+          justify-content:center; background:rgba(10,12,18,.55); z-index:5;
+          font-size:16px; flex-direction:column; gap:12px; }
+  .spinner { width:38px; height:38px; border:4px solid var(--line);
+             border-top-color:var(--accent); border-radius:50%;
+             animation:spin .9s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  #status { padding:6px 14px; background:var(--panel); border-top:1px solid var(--line);
+            font-size:12px; color:var(--dim); min-height:28px; }
+  #agentRow { display:flex; gap:8px; padding:7px 12px; background:var(--panel2);
+              border-bottom:1px solid var(--line); align-items:center; }
+  #agentRow input { flex:1; }
+  #setup { display:none; padding:12px 14px; background:var(--panel2);
+           border-bottom:1px solid var(--line); }
+  #setup.show { display:block; }
+  #setup .row { display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+  #setup .row label { width:130px; color:var(--dim); font-size:13px; }
+  #setup input[type=text] { width:480px; }
+  .legend { display:flex; gap:12px; font-size:12px; color:var(--dim); }
+  .legend i { display:inline-block; width:12px; height:12px; border-radius:3px;
+              margin-right:4px; vertical-align:-2px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌱 Crop<span>Label</span></h1>
+  <span id="modelPill" class="pill">SAM3.1: checking…</span>
+  <span id="clfPill" class="pill" title="Crop-vs-weed classifier learned from your reviewed labels">classifier: —</span>
+  <span class="legend">
+    <span><i style="background:var(--crop)"></i>Crop</span>
+    <span><i style="background:var(--weed)"></i>Weed</span>
+    <span><i style="background:var(--soil)"></i>Soil (auto)</span>
+  </span>
+  <span style="flex:1"></span>
+  <button id="btnSetup">⚙ Setup</button>
+</header>
+
+<div id="setup">
+  <div class="row"><label>Dataset folder</label><input type="text" id="inDataset">
+    <button class="browse" data-for="inDataset">📁 Browse…</button></div>
+  <div class="row"><label>Output folder</label><input type="text" id="inOutput">
+    <button class="browse" data-for="inOutput">📁 Browse…</button></div>
+  <div class="row"><label>Plant prompts</label><input type="text" id="inPrompts"
+      title="SAM3 text prompts used by auto-label (comma separated)">
+    <label style="width:auto">Threshold</label>
+    <input type="number" id="inThresh" min="0.05" max="0.9" step="0.05" style="width:70px">
+    <label style="width:auto" title="ExG vegetation threshold — lower catches paler plants, higher = stricter soil">ExG</label>
+    <input type="number" id="inExg" min="0" max="0.3" step="0.01" style="width:70px">
+    <label style="width:auto" title="instances smaller than this many pixels are dropped">Min px</label>
+    <input type="number" id="inMinPx" min="0" max="2000" step="10" style="width:80px">
+    <button id="btnSaveCfg" class="primary">Save settings</button></div>
+</div>
+
+<div id="layout">
+  <div id="sidebar">
+    <h2>Images <span id="queueCount" style="text-transform:none"></span></h2>
+    <div id="queue"></div>
+    <div id="batchBar"><span id="batchText"></span>
+      <button id="btnBatchStop" style="padding:2px 8px;font-size:11px;margin-left:6px">Stop</button></div>
+  </div>
+
+  <div id="main">
+    <div id="toolbar">
+      <button id="btnAuto" class="primary" title="Soil + every plant found by SAM3 + crop/weed classifier">✨ Auto-label</button>
+      <div class="tgroup">
+        <label class="small">Tool</label>
+        <button class="tool active" data-tool="exemplar" title="FIND SIMILAR: click ONE example plant (or drag a box) — SAM3 labels every similar plant as the selected class. Shift+click = negative example.">⭐</button>
+        <button class="tool" data-tool="addone" title="Add just the single plant under the click as one instance">✚</button>
+        <button class="tool" data-tool="delete" title="Delete the instance under the click">🗑</button>
+        <button class="tool" data-tool="reclass" title="Change the clicked instance to the selected class (crop ↔ weed)">🏷</button>
+        <button class="tool" data-tool="brush" title="Paint the selected class by hand (semantic only)">🖌</button>
+        <button class="tool" data-tool="eraser" title="Erase to soil (also removes instance ownership)">⌫</button>
+      </div>
+      <div class="tgroup">
+        <label class="small">Class</label>
+        <button class="clsbtn active" data-cls="2" style="border-color:var(--crop)">Crop</button>
+        <button class="clsbtn" data-cls="3" style="border-color:var(--weed)">Weed</button>
+      </div>
+      <div class="tgroup">
+        <label class="small">Crop type</label>
+        <select id="selCrop"></select>
+      </div>
+      <div class="tgroup">
+        <label class="small">Brush</label>
+        <input type="range" id="brushSize" min="2" max="60" value="12" style="width:70px">
+      </div>
+      <div class="tgroup">
+        <label class="small">Overlay</label>
+        <input type="range" id="opacity" min="0" max="100" value="100" style="width:70px">
+      </div>
+      <button id="btnResetEx" title="Forget the ⭐ example boxes on this image">⭐✖</button>
+      <button id="btnUndo" title="Ctrl+Z">↶</button>
+      <button id="btnRedo" title="Ctrl+Y">↷</button>
+      <span style="flex:1"></span>
+      <button id="btnBatch" title="Auto-label every remaining image in the folder in the background">⚡ Label ALL remaining</button>
+      <button id="btnSkip">Skip</button>
+      <button id="btnSave" class="good">💾 Save</button>
+    </div>
+    <div id="agentRow">
+      <span style="color:var(--dim);font-size:12px" title="Tell the labeler what to find — free text runs as a SAM3 concept prompt for the selected class. E.g. 'broad leaf plant' with Weed selected.">🤖 Find:</span>
+      <input type="text" id="agentIn" placeholder='describe what to label, e.g. "broad leaf plant" (runs as SAM3 prompt for the selected class) — Enter to run'>
+      <button id="btnAgent" class="primary">Run</button>
+    </div>
+    <div id="canvasWrap">
+      <canvas id="cv"></canvas>
+      <div id="busy"><div class="spinner"></div><div id="busyText">Working…</div></div>
+    </div>
+    <div id="status">Pick an image on the left. Soil is labeled automatically; ⭐ click one plant to label all similar ones.</div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const api = async (url, body) => {
+  const opt = body ? {method:"POST", headers:{"Content-Type":"application/json"},
+                      body:JSON.stringify(body)} : {};
+  const r = await fetch(url, opt);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+};
+
+let IW = 1024, IH = 1024;
+const S = { key:null, img:null, overlay:null, tool:"exemplar", cls:2,
+            zoom:1, ox:0, oy:0, panning:false, spaceDown:false,
+            drawing:false, stroke:[], boxStart:null, boxCur:null, dirty:false };
+
+const cv = $("#cv"), ctx = cv.getContext("2d");
+const wrap = $("#canvasWrap");
+const setStatus = t => $("#status").textContent = t;
+const busy = (on, t) => { $("#busy").style.display = on ? "flex" : "none";
+                          if (t) $("#busyText").textContent = t; };
+
+function loadImg(b64){ return new Promise(res => {
+  const im = new Image(); im.onload = () => res(im);
+  im.src = "data:image/jpeg;base64," + b64; }); }
+
+function fitView(){
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  S.zoom = Math.min(w/IW, h/IH) * .97;
+  S.ox = (w - IW*S.zoom)/2; S.oy = (h - IH*S.zoom)/2;
+}
+function render(){
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  if (cv.width !== w) cv.width = w;
+  if (cv.height !== h) cv.height = h;
+  ctx.fillStyle = "#05070a"; ctx.fillRect(0,0,w,h);
+  if (!S.img) return;
+  ctx.setTransform(S.zoom,0,0,S.zoom,S.ox,S.oy);
+  ctx.imageSmoothingEnabled = S.zoom < 1;
+  const op = (+$("#opacity").value)/100;
+  if (S.overlay && op > 0.5) ctx.drawImage(S.overlay, 0, 0);
+  else {
+    ctx.drawImage(S.img, 0, 0);
+    if (S.overlay && op > 0){ ctx.globalAlpha = op; ctx.drawImage(S.overlay,0,0); ctx.globalAlpha = 1; }
+  }
+  if (S.boxStart && S.boxCur){
+    ctx.strokeStyle = "#4f8cff"; ctx.lineWidth = 2/S.zoom;
+    ctx.strokeRect(Math.min(S.boxStart.x,S.boxCur.x), Math.min(S.boxStart.y,S.boxCur.y),
+                   Math.abs(S.boxCur.x-S.boxStart.x), Math.abs(S.boxCur.y-S.boxStart.y));
+  }
+  if (S.drawing && S.stroke.length){
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = (+$("#brushSize").value)*2;
+    ctx.lineJoin = ctx.lineCap = "round"; ctx.globalAlpha = .35;
+    ctx.beginPath(); ctx.moveTo(S.stroke[0][0], S.stroke[0][1]);
+    for (const p of S.stroke) ctx.lineTo(p[0], p[1]);
+    ctx.stroke(); ctx.globalAlpha = 1;
+  }
+  ctx.setTransform(1,0,0,1,0,0);
+}
+const toImg = e => { const r = cv.getBoundingClientRect();
+  return { x:(e.clientX-r.left-S.ox)/S.zoom, y:(e.clientY-r.top-S.oy)/S.zoom }; };
+
+async function doAct(body, busyText){
+  if (!S.key) { setStatus("Pick an image first."); return null; }
+  if (busyText) busy(true, busyText);
+  try {
+    const res = await api("/api/act", {key:S.key, ...body});
+    S.overlay = await loadImg(res.overlay_b64);
+    S.dirty = true; render();
+    setStatus(`${res.msg} · ${res.n_crop} crop + ${res.n_weed} weed instances`);
+    return res;
+  } catch(err){ setStatus("Failed: " + err.message); return null; }
+  finally { if (busyText) busy(false); }
+}
+
+// ------------------------------------------------------------------ input
+cv.addEventListener("contextmenu", e => e.preventDefault());
+cv.addEventListener("wheel", e => {
+  e.preventDefault();
+  const f = e.deltaY < 0 ? 1.15 : 1/1.15;
+  const r = cv.getBoundingClientRect();
+  const mx = e.clientX-r.left, my = e.clientY-r.top;
+  S.ox = mx-(mx-S.ox)*f; S.oy = my-(my-S.oy)*f; S.zoom *= f; render();
+}, {passive:false});
+
+cv.addEventListener("mousedown", e => {
+  if (!S.img) return;
+  if (e.button === 2 || e.button === 1 || S.spaceDown){
+    S.panning = true; S.px = e.clientX; S.py = e.clientY; return; }
+  const p = toImg(e);
+  if (p.x<0||p.y<0||p.x>=IW||p.y>=IH) return;
+  if (S.tool === "brush" || S.tool === "eraser"){
+    S.drawing = true; S.stroke = [[p.x, p.y]]; render();
+  } else if (S.tool === "exemplar"){
+    S.boxStart = p; S.boxCur = p; S.exNeg = e.shiftKey;
+  }
+});
+window.addEventListener("mousemove", e => {
+  if (S.panning){ S.ox += e.clientX-S.px; S.oy += e.clientY-S.py;
+                  S.px = e.clientX; S.py = e.clientY; render(); return; }
+  if (S.drawing){ const p = toImg(e); S.stroke.push([p.x,p.y]); render(); }
+  else if (S.boxStart){ S.boxCur = toImg(e); render(); }
+});
+window.addEventListener("mouseup", async e => {
+  S.panning = false;
+  if (S.drawing){
+    S.drawing = false;
+    const path = S.stroke.map(p => [Math.round(p[0]), Math.round(p[1])]);
+    S.stroke = [];
+    await doAct({action:"brush", path, radius:+$("#brushSize").value,
+                 cls: S.tool === "eraser" ? 1 : S.cls}, null);
+    return;
+  }
+  if (S.boxStart){
+    const a = S.boxStart, b = S.boxCur || a, neg = S.exNeg;
+    S.boxStart = S.boxCur = null; render();
+    const big = Math.abs(b.x-a.x) > 6 && Math.abs(b.y-a.y) > 6;
+    await doAct({action:"exemplar",
+                 box: big ? [Math.min(a.x,b.x),Math.min(a.y,b.y),
+                             Math.max(a.x,b.x),Math.max(a.y,b.y)] : null,
+                 x:a.x, y:a.y, cls:S.cls, negative:neg},
+                "SAM3 finding similar plants…");
+    return;
+  }
+  if (!S.img || e.target !== cv) return;
+  const p = toImg(e);
+  if (p.x<0||p.y<0||p.x>=IW||p.y>=IH) return;
+  if (S.tool === "addone") await doAct({action:"add_one", x:p.x, y:p.y, cls:S.cls}, "Adding plant…");
+  else if (S.tool === "delete") await doAct({action:"delete", x:p.x, y:p.y}, null);
+  else if (S.tool === "reclass") await doAct({action:"reclass", x:p.x, y:p.y, cls:S.cls}, null);
+});
+window.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.code === "Space"){ S.spaceDown = true; e.preventDefault(); }
+  if (e.ctrlKey && e.key === "z"){ doAct({action:"undo"}, null); e.preventDefault(); }
+  if (e.ctrlKey && e.key === "y"){ doAct({action:"redo"}, null); e.preventDefault(); }
+  if (e.ctrlKey && e.key === "s"){ $("#btnSave").click(); e.preventDefault(); return; }
+  const tools = {1:"exemplar",2:"addone",3:"delete",4:"reclass",5:"brush",6:"eraser"};
+  if (tools[e.key]) setTool(tools[e.key]);
+  if (e.key === "c") setCls(2);
+  if (e.key === "w") setCls(3);
+});
+window.addEventListener("keyup", e => { if (e.code === "Space") S.spaceDown = false; });
+window.addEventListener("resize", render);
+
+function setTool(t){ S.tool = t;
+  document.querySelectorAll(".tool").forEach(b => b.classList.toggle("active", b.dataset.tool === t)); }
+function setCls(c){ S.cls = c;
+  document.querySelectorAll(".clsbtn").forEach(b => {
+    const on = +b.dataset.cls === c;
+    b.classList.toggle("active", on);
+    b.style.background = on ? b.style.borderColor : "";
+  }); }
+document.querySelectorAll(".tool").forEach(b => b.onclick = () => setTool(b.dataset.tool));
+document.querySelectorAll(".clsbtn").forEach(b => b.onclick = () => setCls(+b.dataset.cls));
+setCls(2);
+
+$("#opacity").oninput = render;
+$("#btnUndo").onclick = () => doAct({action:"undo"}, null);
+$("#btnRedo").onclick = () => doAct({action:"redo"}, null);
+$("#btnResetEx").onclick = () => doAct({action:"exemplar_reset"}, null);
+$("#btnAuto").onclick = () => doAct({action:"autolabel"}, "Auto-labeling (soil + SAM3 plants + classifier)…");
+$("#selCrop").onchange = () => doAct({action:"set_crop_type", crop_type:$("#selCrop").value}, null);
+
+$("#btnAgent").onclick = runAgent;
+$("#agentIn").addEventListener("keydown", e => { if (e.key === "Enter") runAgent(); });
+async function runAgent(){
+  const t = $("#agentIn").value.trim();
+  if (!t) return;
+  await doAct({action:"text_prompt", prompt:t, cls:S.cls},
+              `SAM3 searching "${t}"…`);
+}
+
+// ------------------------------------------------------------------ queue
+async function loadQueue(){
+  const q = await api("/api/queue");
+  const el = $("#queue"); el.innerHTML = "";
+  let done = 0, auto = 0;
+  for (const g of q.groups){
+    const div = document.createElement("div"); div.className = "grp";
+    const nd = g.items.filter(i => i.status === "reviewed").length;
+    auto += g.items.filter(i => i.status === "auto").length;
+    done += nd;
+    const head = document.createElement("div"); head.className = "grp-head";
+    head.innerHTML = `<span>${g.group}</span><span style="color:var(--dim)">${nd}/${g.items.length}</span>`;
+    head.onclick = () => div.classList.toggle("open");
+    const items = document.createElement("div"); items.className = "grp-items";
+    for (const it of g.items){
+      const c = document.createElement("div");
+      c.className = "chip" + (it.key === S.key ? " sel" : "");
+      c.innerHTML = `<span class="dot ${it.status}"></span>${it.name}`;
+      c.onclick = () => openItem(it.key);
+      items.appendChild(c);
+    }
+    div.appendChild(head); div.appendChild(items);
+    if (g.items.some(i => i.key === S.key)) div.classList.add("open");
+    el.appendChild(div);
+  }
+  $("#queueCount").textContent = `(${done}/${q.total} reviewed${auto ? `, ${auto} auto` : ""})`;
+}
+
+async function openItem(key){
+  if (S.dirty && S.key){
+    busy(true, "Saving current image…");
+    try { await api("/api/save", {key:S.key, status:"reviewed"}); }
+    catch(e){ if (!confirm("Could not save (" + e.message + "). Switch anyway?")) { busy(false); return; } }
+  }
+  busy(true, "Loading…");
+  try {
+    const r = await api("/api/open", {key});
+    S.key = key; S.dirty = false;
+    IW = r.w; IH = r.h;
+    S.img = await loadImg(r.img_b64);
+    S.overlay = await loadImg(r.overlay_b64);
+    $("#selCrop").value = r.crop_type;
+    fitView(); render(); loadQueue();
+    setStatus(`${key} · ${r.n_instances} instances · vegetation ${r.veg_pct}% · ` +
+      (r.status === "auto" ? "AUTO labels — review, correct, Save."
+       : r.status === "reviewed" ? "already reviewed."
+       : "soil labeled automatically — ⭐ click one plant to label all similar."));
+  } catch(err){ setStatus("Load failed: " + err.message); }
+  busy(false);
+}
+
+$("#btnSave").onclick = async () => {
+  if (!S.key) return;
+  busy(true, "Saving all label files…");
+  try {
+    const r = await api("/api/save", {key:S.key, crop_type:$("#selCrop").value});
+    S.dirty = false;
+    setStatus(`Saved ✔ ${r.record.n_crop_instances} crop + ${r.record.n_weed_instances} weed instances · crop ${r.record.crop_pct}% · → ${r.record.out_dir}`);
+    updClf(r.classifier); loadQueue();
+  } catch(err){ setStatus("Save failed: " + err.message); }
+  busy(false);
+};
+$("#btnSkip").onclick = async () => {
+  if (!S.key) return;
+  await api("/api/skip", {key:S.key}); S.dirty = false; loadQueue();
+};
+
+// ------------------------------------------------------------------ batch
+$("#btnBatch").onclick = async () => {
+  const q = await api("/api/queue");
+  const n = q.groups.flatMap(g => g.items).filter(i => i.status === "pending").length;
+  if (!n) return setStatus("Nothing pending.");
+  const c = await api("/api/model/status");
+  const extra = c.classifier.active
+    ? ` The crop/weed classifier (trained on ${c.classifier.trained_on} of your instances) will classify each plant.`
+    : " No weed examples yet — every plant will be labeled as crop; review and fix weeds, the classifier learns from your saves.";
+  if (!confirm(`Auto-label ${n} remaining images in the background?${extra}`)) return;
+  await api("/api/autolabel_all", {});
+  pollBatch();
+};
+$("#btnBatchStop").onclick = () => api("/api/autolabel_all/stop", {});
+async function pollBatch(){
+  const s = await api("/api/autolabel_all/status");
+  const bar = $("#batchBar");
+  if (s.running){
+    bar.classList.add("show");
+    $("#batchText").textContent = `⚡ ${s.done}/${s.total} — ${s.current}`;
+    setTimeout(pollBatch, 3000);
+    if (s.done % 5 === 0) loadQueue();
+  } else if (s.total){
+    $("#batchText").textContent = `⚡ done ${s.done}/${s.total}` +
+      (s.errors.length ? ` (${s.errors.length} errors)` : "");
+    setTimeout(() => bar.classList.remove("show"), 12000);
+    loadQueue();
+  } else bar.classList.remove("show");
+}
+
+// ------------------------------------------------------------------ setup
+$("#btnSetup").onclick = () => $("#setup").classList.toggle("show");
+async function loadCfg(){
+  const c = await api("/api/config");
+  $("#inDataset").value = c.dataset_root; $("#inOutput").value = c.output_root;
+  $("#inPrompts").value = (c.plant_prompts||[]).join(", ");
+  $("#inThresh").value = c.native_threshold; $("#inExg").value = c.exg_thresh;
+  $("#inMinPx").value = c.min_instance_px;
+  const sel = $("#selCrop"); sel.innerHTML = "";
+  for (const t of c.crop_types){ const o = document.createElement("option");
+    o.value = o.textContent = t; sel.appendChild(o); }
+  sel.value = c.default_crop_type;
+}
+$("#btnSaveCfg").onclick = async () => {
+  await api("/api/config", {dataset_root:$("#inDataset").value,
+    output_root:$("#inOutput").value,
+    plant_prompts:$("#inPrompts").value.split(",").map(s=>s.trim()).filter(Boolean),
+    native_threshold:+$("#inThresh").value, exg_thresh:+$("#inExg").value,
+    min_instance_px:+$("#inMinPx").value,
+    default_crop_type:$("#selCrop").value});
+  setStatus("Settings saved."); loadQueue();
+};
+document.querySelectorAll(".browse").forEach(b => b.onclick = async () => {
+  const r = await api("/api/browse", {});
+  if (r.path){ $("#" + b.dataset.for).value = r.path; $("#btnSaveCfg").click(); }
+});
+
+async function pollModel(){
+  const s = await api("/api/model/status");
+  const pill = $("#modelPill");
+  if (s.native_loaded){ pill.textContent = "SAM3.1 ready (GPU)"; pill.className = "pill on"; }
+  else if (s.native_available){ pill.textContent = "SAM3.1 available (loads on first use)"; pill.className = "pill on"; }
+  else { pill.textContent = "SAM3.1 NOT available"; pill.className = "pill err";
+         pill.title = s.native_error || ""; }
+  updClf(s.classifier);
+}
+function updClf(c){
+  const p = $("#clfPill");
+  p.textContent = c.active ? `classifier: ${c.trained_on} instances`
+    : `classifier: learning (${c.crop_samples || 0}crop/${c.weed_samples || 0}weed)`;
+  p.className = "pill" + (c.active ? " on" : "");
+}
+
+(async function init(){ await loadCfg(); await loadQueue(); pollModel(); pollBatch(); render(); })();
+</script>
+</body>
+</html>

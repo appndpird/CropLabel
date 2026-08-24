@@ -1,0 +1,17 @@
+# large model weights
+models/
+*.pt
+*.pth
+*.onnx
+*.yml
+
+# local state / outputs / data
+settings.json
+labels/
+dataset/
+__pycache__/
+*.pyc
+build/
+dist/
+*.zip
+*.tar.gz
