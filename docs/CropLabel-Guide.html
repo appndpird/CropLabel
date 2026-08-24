@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CropLabel — Installation &amp; User Guide</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  body { font: 11pt/1.55 "Segoe UI", Calibri, sans-serif; color: #1a2416;
+         max-width: 175mm; margin: 0 auto; }
+  h1 { font-size: 24pt; margin: 0 0 2mm; color: #1e5c17; }
+  h1 small { font-size: 11pt; color: #667; font-weight: 400; display:block; margin-top:2mm; }
+  h2 { font-size: 15pt; color: #1e5c17; border-bottom: 2px solid #cbe3c7;
+       padding-bottom: 1.5mm; margin: 9mm 0 3mm; page-break-after: avoid; }
+  h3 { font-size: 12pt; color: #2a7a22; margin: 6mm 0 2mm; page-break-after: avoid; }
+  p, li { margin: 0 0 2.2mm; }
+  ul, ol { margin: 0 0 3mm; padding-left: 6mm; }
+  code, kbd { font: 9.5pt Consolas, monospace; background: #eef4ec;
+              padding: 0.4mm 1.4mm; border-radius: 2px; }
+  kbd { border: 1px solid #b9d0b4; background: #f4faf2; }
+  pre { font: 9.5pt Consolas, monospace; background: #f2f7f0; border: 1px solid #d7e6d3;
+        border-radius: 4px; padding: 3mm; white-space: pre-wrap; word-break: break-all;
+        page-break-inside: avoid; }
+  table { border-collapse: collapse; width: 100%; margin: 0 0 4mm; font-size: 10pt;
+          page-break-inside: avoid; }
+  th, td { border: 1px solid #c2d6bd; padding: 1.6mm 2.5mm; text-align: left;
+           vertical-align: top; }
+  th { background: #e4f0e1; color: #1e5c17; }
+  .tool { font-size: 13pt; }
+  .note { background: #fff7e0; border-left: 4px solid #e6a23c; padding: 2.5mm 4mm;
+          margin: 3mm 0; border-radius: 0 4px 4px 0; page-break-inside: avoid; }
+  .tip { background: #e9f6ee; border-left: 4px solid #3fbf6f; padding: 2.5mm 4mm;
+         margin: 3mm 0; border-radius: 0 4px 4px 0; page-break-inside: avoid; }
+  .toc { background:#f2f7f0; border:1px solid #d7e6d3; border-radius:4px; padding:4mm 6mm; }
+  .toc ol { margin:0; }
+  .pagebreak { page-break-before: always; }
+  footer { margin-top: 10mm; font-size: 9pt; color: #778; border-top: 1px solid #cdc;
+           padding-top: 2mm; }
+</style>
+</head>
+<body>
+
+<h1>🌱 CropLabel <small>Installation &amp; User Guide — SAM3.1-assisted crop / weed / soil labeling for plot images · v1.0 · August 2026</small></h1>
+
+<div class="toc">
+<b>Contents</b>
+<ol>
+  <li>What CropLabel does</li>
+  <li>The idea: label two plants, get the whole folder</li>
+  <li>Requirements &amp; installation</li>
+  <li>First-time setup</li>
+  <li>The labeling workflow, step by step</li>
+  <li>All tools reference</li>
+  <li>The "Find" box — telling the labeler what to look for</li>
+  <li>The crop-vs-weed classifier</li>
+  <li>Batch auto-labeling a whole folder</li>
+  <li>Output files</li>
+  <li>Settings reference</li>
+  <li>Troubleshooting</li>
+</ol>
+</div>
+
+<h2>1. What CropLabel does</h2>
+<p>CropLabel is a browser-based tool for labeling <b>crop plants, weeds and
+soil</b> in field plot images (UAV tiles, plot photos). It produces both:</p>
+<ul>
+  <li><b>Semantic segmentation</b> — every pixel classed as soil, crop or weed;</li>
+  <li><b>Instance segmentation</b> — every individual plant separated with its
+      own ID, class, score and bounding box.</li>
+</ul>
+<p>Each image contains <b>one crop species</b> (barley, wheat, canola, oats, …,
+selected per image) plus possible weeds. Soil is labeled <b>completely
+automatically</b> — you never touch it.</p>
+<table>
+<tr><th>Semantic value</th><th>Class</th><th>Color</th></tr>
+<tr><td>0</td><td>unlabeled (vegetation not yet assigned)</td><td>—</td></tr>
+<tr><td>1</td><td>soil (automatic — includes stubble/straw)</td><td>brown</td></tr>
+<tr><td>2</td><td>crop</td><td>green</td></tr>
+<tr><td>3</td><td>weed</td><td>red</td></tr>
+</table>
+
+<h2>2. The idea: label two plants, get the whole folder</h2>
+<p>The tool is built around a feedback loop between you and two AI systems:</p>
+<ol>
+  <li><b>Soil is free.</b> Opening an image instantly separates living
+      vegetation from everything else (Excess-Green index), so soil, stubble
+      and plot markers are already labeled.</li>
+  <li><b>One click labels all similar plants.</b> Click a single example plant
+      with the ⭐ tool — SAM3.1 finds every similar-looking plant in the image
+      and labels each one as a separate instance. Do the same once for a weed
+      with the Weed class selected.</li>
+  <li><b>Your corrections train a classifier.</b> Every time you press Save,
+      a crop-vs-weed classifier retrains on all your labeled instances
+      (color, shape and texture features). </li>
+  <li><b>The folder labels itself.</b> "⚡ Label ALL remaining" then runs on
+      every image: automatic soil + SAM3.1 plant detection + the classifier
+      deciding crop-vs-weed per plant. Review the results, fix the few
+      mistakes, save — each save makes the next batch better.</li>
+</ol>
+<div class="tip"><b>Measured on barley trial tiles (1600×1600):</b> ~40 plant
+instances found per image in under half a second on the GPU; a 38-image folder
+batch-labeled in about 2 minutes.</div>
+
+<h2>3. Requirements &amp; installation</h2>
+<ul>
+  <li>Windows 10/11 64-bit, <b>NVIDIA GPU</b> (8&nbsp;GB+ VRAM recommended) with a
+      current driver</li>
+  <li>Python 3.13 64-bit</li>
+  <li>A modern browser. The app runs locally at <code>http://127.0.0.1:8323</code>
+      — no internet needed after installation, no image ever leaves the computer.</li>
+</ul>
+<ol>
+  <li>Clone the repository and install dependencies:
+<pre>git clone https://github.com/appndpird/CropLabel.git
+cd CropLabel
+pip install fastapi uvicorn opencv-python numpy pillow tokenizers
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+pip install git+https://github.com/facebookresearch/sam3.git
+pip install einops triton-windows pycocotools timm
+pip install "numpy&gt;=2.1" --upgrade      # sam3 pins numpy&lt;2 — undo that</pre></li>
+  <li>Download the SAM3.1 checkpoint <code>sam3.1_multiplex.pt</code> from
+      <code>huggingface.co/strangervisionhf/sam3.1-st-bf16</code> (open access,
+      no account needed) and place it in the repo's <code>models\</code> folder.</li>
+  <li>Start with <b><code>CropLabel.bat</code></b> (or <code>python run_app.py</code>).
+      The browser opens automatically; keep the console window open while working.</li>
+</ol>
+<div class="note"><b>Important:</b> torchvision must be a CUDA build
+(<code>+cu128</code>). A CPU-only torchvision crashes the SAM3.1 engine with a
+<code>roi_align</code> error — reinstall with the <code>--index-url …/cu128</code>
+shown above.</div>
+
+<h2>4. First-time setup</h2>
+<ol>
+  <li>Click <b>⚙ Setup</b> in the header.</li>
+  <li><b>Dataset folder</b> — 📁 Browse to the folder holding the images.
+      Images are found <i>recursively</i>, so plot subfolders work
+      (e.g. <code>tiles\plot_10001\…png</code>). Supported: png, jpg, tif, bmp.</li>
+  <li><b>Output folder</b> — where the label files are written (the input
+      folder structure is mirrored there).</li>
+  <li>Leave the other settings at their defaults to start (section 11 explains
+      each one). Press <b>Save settings</b> — the image list appears in the
+      left sidebar, grouped by plot/folder.</li>
+</ol>
+
+<h2 class="pagebreak">5. The labeling workflow, step by step</h2>
+<ol>
+  <li><b>Pick an image</b> in the sidebar. Dots: grey = pending,
+      <span style="color:#2a6fdd">blue = auto-labeled (review)</span>,
+      <span style="color:#2f9e57">green = reviewed</span>, orange = skipped.
+      The image opens with <b>soil already labeled</b>.</li>
+  <li><b>Set the crop type</b> once per image (dropdown in the toolbar:
+      barley / wheat / canola / oats / other). It is stored with the labels.</li>
+  <li><b>Label the crop:</b> with the <b>Crop</b> class selected and the ⭐ tool
+      active, click one clear example plant. All similar plants get labeled as
+      individual instances (white outlines show the separation). Add another
+      example click if some were missed; <kbd>Shift</kbd>+click anything wrongly
+      labeled as a negative example — the search re-runs refined.</li>
+  <li><b>Label weeds</b> (if any): select the <b>Weed</b> class, ⭐ click one
+      weed. Or use the 🤖 Find box: type what the weed looks like
+      (e.g. <i>broad leaf plant</i>) and press Enter.</li>
+  <li><b>Fix the details:</b> 🗑 deletes a wrong instance, 🏷 flips an
+      instance between crop and weed, ✚ adds a single missed plant, 🖌/⌫
+      paint/erase pixels manually. <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes anything.</li>
+  <li><b>💾 Save</b> (or <kbd>Ctrl</kbd>+<kbd>S</kbd>) — writes all label files
+      and retrains the crop-vs-weed classifier with your instances. Switching
+      image auto-saves, so nothing is lost.</li>
+  <li>After 2–3 reviewed images, press <b>⚡ Label ALL remaining</b> and let
+      the folder label itself, then review the blue images.</li>
+</ol>
+
+<h2>6. All tools reference</h2>
+<table>
+<tr><th style="width:16mm">Tool</th><th style="width:12mm">Key</th><th>What it does</th></tr>
+<tr><td class="tool">⭐</td><td>1</td><td><b>Find similar</b> — click ONE example plant (or drag a box around it): SAM3.1 labels every similar plant in the image as separate instances of the selected class. <kbd>Shift</kbd>+click = negative example (something it must NOT label). Examples accumulate and refine each other; ⭐✖ clears them.</td></tr>
+<tr><td class="tool">✚</td><td>2</td><td><b>Add one</b> — labels just the single plant under the click as one instance (no search).</td></tr>
+<tr><td class="tool">🗑</td><td>3</td><td><b>Delete</b> — removes the instance under the click (pixels return to soil/unlabeled).</td></tr>
+<tr><td class="tool">🏷</td><td>4</td><td><b>Reclassify</b> — the clicked instance becomes the selected class (crop ↔ weed).</td></tr>
+<tr><td class="tool">🖌</td><td>5</td><td><b>Brush</b> — paint the selected class by hand (semantic only; size slider in the toolbar).</td></tr>
+<tr><td class="tool">⌫</td><td>6</td><td><b>Eraser</b> — paint back to soil; also removes instance ownership of the erased pixels.</td></tr>
+</table>
+<p><b>Other controls:</b> mouse wheel = zoom · right-drag or <kbd>Space</kbd>+drag = pan ·
+<kbd>c</kbd>/<kbd>w</kbd> = select Crop/Weed class · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo ·
+<kbd>Ctrl</kbd>+<kbd>S</kbd> save · <b>Overlay</b> slider fades the label view ·
+<b>✨ Auto-label</b> runs the full automatic pipeline on the current image ·
+<b>Skip</b> marks an image to ignore.</p>
+
+<h2>7. The 🤖 "Find" box — telling the labeler what to look for</h2>
+<p>The text box above the canvas sends any free-text description to SAM3.1 as
+a concept prompt and labels the matches as the <b>currently selected class</b>:</p>
+<ul>
+  <li>Select <b>Weed</b>, type <i>broad leaf plant</i> → broadleaf weeds get labeled.</li>
+  <li>Select <b>Crop</b>, type <i>thin grass seedling</i> → grass-like seedlings get labeled.</li>
+</ul>
+<p>Useful phrasings are visual descriptions: <i>plant, seedling, green plant,
+grass, leaf, small plant</i>. Species names (e.g. "ryegrass") usually work
+worse than descriptions of shape and color. If a prompt returns too much or
+too little, adjust the <b>Threshold</b> in Setup (lower = more detections) and
+run it again — every run is undoable.</p>
+<div class="note">SAM3.1 finds <i>plants</i> extremely well but cannot reliably
+tell crop from weed by name alone — both are green plants. That judgement
+comes from your examples: the ⭐ clicks and the classifier (next section).</div>
+
+<h2>8. The crop-vs-weed classifier</h2>
+<p>Every saved image contributes its instances (with your corrected classes)
+as training data. Once at least <b>3 crop and 3 weed instances</b> exist, the
+classifier activates (header pill turns green) and from then on every
+auto-label and batch run classifies each detected plant as crop or weed
+automatically, using color, shape and texture features.</p>
+<ul>
+  <li>Until then, all detected plants default to <b>crop</b> (the safe
+      assumption in a crop trial) — reclassify the weeds you see with 🏷 and save.</li>
+  <li>The classifier improves with every save; there is nothing to configure.</li>
+  <li>The header pill shows its state, e.g. <code>classifier: 74 instances</code>.</li>
+</ul>
+
+<h2 class="pagebreak">9. Batch auto-labeling a whole folder</h2>
+<p><b>⚡ Label ALL remaining</b> processes every pending image in the
+background: automatic soil → SAM3.1 plant instances (using the plant prompts
+from Setup) → crop/weed classification. Progress shows in the sidebar; you can
+keep labeling while it runs, and Stop it anytime.</p>
+<ul>
+  <li>Results are saved with status <b>auto</b> (blue dot) — every one stays
+      fully editable. Open, correct, Save to promote to reviewed (green).</li>
+  <li>Speed: roughly 1–3 seconds per image on a GPU.</li>
+  <li>Re-running the batch only touches images that are still pending.</li>
+</ul>
+<div class="tip"><b>Best practice:</b> review 3–5 images first (including at
+least a few weed examples if the field has weeds), then batch. The classifier
+then labels crop vs weed for the whole folder instead of defaulting to crop.</div>
+
+<h2>10. Output files</h2>
+<p>Written to the output folder, mirroring the dataset's folder structure.
+<b>The semantic mask has the same filename and pixel size as the input
+image</b>, so downstream training pipelines can pair image ↔ label by name.</p>
+<table>
+<tr><th>File</th><th>Content</th></tr>
+<tr><td><code>&lt;name&gt;.png</code></td><td>Semantic index mask (0/1/2/3), same name &amp; size as the input image.</td></tr>
+<tr><td><code>&lt;name&gt;_instances.png</code></td><td>16-bit instance-ID map (0 = no instance) — the instance segmentation. IDs match the JSON records.</td></tr>
+<tr><td><code>&lt;name&gt;_color.png</code></td><td>Color-coded semantic mask.</td></tr>
+<tr><td><code>&lt;name&gt;_overlay.png</code></td><td>Labels blended over the image for quick visual checks.</td></tr>
+<tr><td><code>&lt;name&gt;.json</code></td><td>Crop type, status, engine, per-class pixel percentages, and one record per instance: id, class, score, bounding box, area (all at original resolution).</td></tr>
+<tr><td><code>records.json</code></td><td>Queue status store (drives the sidebar colors).</td></tr>
+</table>
+
+<h2>11. Settings reference (⚙ Setup)</h2>
+<table>
+<tr><th>Setting</th><th>Default</th><th>Meaning</th></tr>
+<tr><td>Plant prompts</td><td>plant, seedling</td><td>SAM3.1 text prompts used by ✨ auto-label and the batch. Comma-separated; results are merged and de-duplicated.</td></tr>
+<tr><td>Threshold</td><td>0.4</td><td>SAM3.1 confidence cut-off. Lower finds more (and more false) plants.</td></tr>
+<tr><td>ExG</td><td>0.06</td><td>Excess-Green vegetation threshold. Lower catches paler/yellowish plants as vegetation; higher pushes more into soil. Also clips every SAM instance so masks never bleed into soil.</td></tr>
+<tr><td>Min px</td><td>30</td><td>Instances smaller than this many pixels (at working resolution) are dropped as noise.</td></tr>
+<tr><td>work_res</td><td>1024</td><td>Internal working resolution (settings.json). Labels are always saved at the original image size.</td></tr>
+</table>
+
+<h2>12. Troubleshooting</h2>
+<table>
+<tr><th>Problem</th><th>Fix</th></tr>
+<tr><td>Header pill: <i>SAM3.1 NOT available</i></td><td>No NVIDIA GPU/driver, or <code>models\sam3.1_multiplex.pt</code> missing, or torchvision is a CPU build (reinstall with <code>--index-url …/cu128</code>). Hover the pill for the exact error.</td></tr>
+<tr><td>⭐ finds only a few plants</td><td>Click a <i>typical, clearly visible</i> plant; add a second example click. Dragging a snug box around one plant often beats a click. Lower the Threshold for more matches.</td></tr>
+<tr><td>Pale/yellow plants counted as soil</td><td>Lower the ExG setting (e.g. 0.03) and reopen the image.</td></tr>
+<tr><td>Stubble/straw labeled as plants</td><td>Raise ExG slightly, raise Min px, or <kbd>Shift</kbd>+click a piece of stubble as a ⭐ negative example.</td></tr>
+<tr><td>Everything labeled crop, weeds missed</td><td>Expected before the classifier has weed examples. Reclassify (🏷) a few weeds, Save, re-run auto-label / batch.</td></tr>
+<tr><td>Two touching plants merged into one instance</td><td>Delete the merged instance (🗑), then ✚ click each plant separately, or use a snug ⭐ box on one of them.</td></tr>
+<tr><td>App won't start / port in use</td><td>Only one instance at a time — port 8323. Close the other console window.</td></tr>
+<tr><td>Wrong folder scanned</td><td>⚙ Setup → check both folders → Save settings. The sidebar reloads immediately.</td></tr>
+</table>
+
+<footer>CropLabel · DPIRD — repository: github.com/appndpird/CropLabel ·
+This guide corresponds to the August 2026 build (v1.0).</footer>
+
+</body>
+</html>
