@@ -192,6 +192,14 @@
         <label class="small">Crop type</label>
         <select id="selCrop"></select>
       </div>
+      <div class="tgroup" title="Move / zoom the image">
+        <label class="small">View</label>
+        <button class="tool" data-tool="pan" title="HAND: left-drag to move the image (right-drag, middle-drag or Space+drag work with every tool; arrow keys nudge)">✋<span class="k">H</span></button>
+        <button id="btnZoomOut" title="Zoom out (−)" style="min-width:30px">−</button>
+        <button id="btnZoomIn" title="Zoom in (+)" style="min-width:30px">+</button>
+        <button id="btnFit" title="Fit the image to the window (F)">⤢ Fit</button>
+        <button id="btnZoom1" title="100 % (1 image pixel = 1 screen pixel)">1:1</button>
+      </div>
       <button id="btnUndo" title="Ctrl+Z">↶</button>
       <button id="btnRedo" title="Ctrl+Y">↷</button>
       <span style="flex:1"></span>
@@ -211,7 +219,7 @@
         <input type="range" id="opacity" min="0" max="100" value="100" style="width:80px"></span>
       <button id="btnResetEx" title="Forget the ⭐ example boxes on this image" style="padding:3px 8px">⭐✖</button>
       <span style="flex:1"></span>
-      <span style="color:var(--dim)">wheel zoom · right-drag / Space pan · Alt+click select · Del delete selected · Esc cancel</span>
+      <span style="color:var(--dim)">wheel zoom · ✋ / right-drag / Space-drag / arrows move · F fit · Alt+click select · Del delete selected · Esc cancel</span>
     </div>
     <div id="agentRow">
       <span style="color:var(--dim);font-size:12px" title="Tell the labeler what to find — free text runs as a SAM3 concept prompt for the selected class. E.g. 'broad leaf plant' with Weed selected.">🤖 Find:</span>
@@ -269,7 +277,8 @@ const HINTS = {
   splitbox:"✂▭ Drag a box around the part that should be a separate plant.",
   merge:"⛓ Click the first instance, then the one to merge into it.",
   delete:"🗑 Click an instance to delete it.",
-  reclass:"🏷 Click an instance to change it to the selected class." };
+  reclass:"🏷 Click an instance to change it to the selected class.",
+  pan:"✋ Left-drag to move the image. Wheel = zoom at the cursor, arrow keys = nudge, F = fit. (Right-drag / Space+drag also pan with any tool.)" };
 
 function loadImg(b64){ return new Promise(res => {
   const im = new Image(); im.onload = () => res(im);
@@ -404,8 +413,8 @@ cv.addEventListener("dblclick", e => {
 
 cv.addEventListener("mousedown", e => {
   if (!S.img) return;
-  if (e.button === 2 || e.button === 1 || S.spaceDown){
-    S.panning = true; S.px = e.clientX; S.py = e.clientY; return; }
+  if (e.button === 2 || e.button === 1 || S.spaceDown || S.tool === "pan"){
+    S.panning = true; S.px = e.clientX; S.py = e.clientY; cv.style.cursor = "grabbing"; return; }
   const p = toImg(e);
   if (!inside(p)) return;
   S.ctrlDown = e.ctrlKey;
@@ -431,7 +440,7 @@ window.addEventListener("mousemove", e => {
   else if (S.poly.length || S.tool === "brush" || S.tool === "eraser") render();
 });
 window.addEventListener("mouseup", async e => {
-  S.panning = false;
+  if (S.panning){ S.panning = false; cv.style.cursor = S.tool === "pan" ? "grab" : "crosshair"; return; }
   if (S.drawing){
     S.drawing = false;
     const path = S.stroke.map(p => [Math.round(p[0]), Math.round(p[1])]);
@@ -480,8 +489,17 @@ window.addEventListener("keydown", e => {
   if (e.key === "[" ){ $("#brushSize").value = Math.max(1, +$("#brushSize").value - 2); $("#brushSize").oninput(); }
   if (e.key === "]" ){ $("#brushSize").value = Math.min(60, +$("#brushSize").value + 2); $("#brushSize").oninput(); }
   const tools = {1:"exemplar",2:"addone",3:"polygon",4:"brush",5:"eraser",6:"select",
-                 7:"splitline",8:"splitpoints",9:"splitbox",0:"merge",d:"delete",r:"reclass"};
+                 7:"splitline",8:"splitpoints",9:"splitbox",0:"merge",d:"delete",r:"reclass",h:"pan"};
   if (tools[e.key]) setTool(tools[e.key]);
+  // ---- navigation
+  const step = 60;
+  if (e.key === "ArrowLeft"){ S.ox += step; render(); e.preventDefault(); }
+  if (e.key === "ArrowRight"){ S.ox -= step; render(); e.preventDefault(); }
+  if (e.key === "ArrowUp"){ S.oy += step; render(); e.preventDefault(); }
+  if (e.key === "ArrowDown"){ S.oy -= step; render(); e.preventDefault(); }
+  if (e.key === "+" || e.key === "=") zoomBy(1.25);
+  if (e.key === "-" || e.key === "_") zoomBy(1/1.25);
+  if (e.key === "f"){ fitView(); render(); }
   if (e.key === "c"){ setCls(2); if (S.selected) doAct({action:"reclass", iid:S.selected.id, cls:2}, null); }
   if (e.key === "w"){ setCls(3); if (S.selected) doAct({action:"reclass", iid:S.selected.id, cls:3}, null); }
 });
@@ -489,6 +507,7 @@ window.addEventListener("keyup", e => { if (e.code === "Space") S.spaceDown = fa
 window.addEventListener("resize", render);
 
 function setTool(t){ if (S.tool !== t) cancelPending(); S.tool = t;
+  cv.style.cursor = t === "pan" ? "grab" : "crosshair";
   document.querySelectorAll(".tool").forEach(b => b.classList.toggle("active", b.dataset.tool === t));
   $("#hint").textContent = HINTS[t] || ""; }
 function setCls(c){ S.cls = c;
@@ -501,6 +520,15 @@ document.querySelectorAll(".tool").forEach(b => b.onclick = () => setTool(b.data
 document.querySelectorAll(".clsbtn").forEach(b => b.onclick = () => setCls(+b.dataset.cls));
 setCls(2); setTool("exemplar");
 
+// zoom around the centre of the canvas
+function zoomBy(f){
+  const cx = wrap.clientWidth/2, cy = wrap.clientHeight/2;
+  S.ox = cx-(cx-S.ox)*f; S.oy = cy-(cy-S.oy)*f; S.zoom *= f; render();
+}
+$("#btnZoomIn").onclick = () => zoomBy(1.25);
+$("#btnZoomOut").onclick = () => zoomBy(1/1.25);
+$("#btnFit").onclick = () => { fitView(); render(); };
+$("#btnZoom1").onclick = () => zoomBy(1/S.zoom);
 $("#opacity").oninput = render;
 $("#brushSize").oninput = () => { $("#brushVal").textContent = $("#brushSize").value; render(); };
 $("#btnUndo").onclick = () => doAct({action:"undo"}, null);

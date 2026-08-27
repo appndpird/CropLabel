@@ -86,7 +86,8 @@ opencv, fastapi). The SAM3.1 checkpoint lives in `models/sam3.1_multiplex.pt`.
 | Fix | ⛓ merge | 0 | click the first instance, then the second → one instance |
 | Fix | 🗑 delete | D | remove the clicked instance |
 | Fix | 🏷 reclassify | R | clicked instance → selected class (crop ↔ weed) |
-| keys | | | `c` crop, `w` weed, `Ctrl+Z/Y` undo/redo, `Ctrl+S` save, `Esc` cancel / deselect, wheel zoom, right-drag or Space pan |
+| View | ✋ hand | H | left-drag moves the image (right-drag, middle-drag or Space+drag move it with **any** tool); `−` / `+` / `⤢ Fit` / `1:1` buttons, arrow keys nudge, `F` fits, wheel zooms at the cursor |
+| keys | | | `c` crop, `w` weed, `Ctrl+Z/Y` undo/redo, `Ctrl+S` save, `Esc` cancel / deselect |
 
 Every action is undoable (25 steps). Splits keep the original id on the
 largest part and give new ids to the others; the label files always contain
