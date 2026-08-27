@@ -39,7 +39,7 @@
 </head>
 <body>
 
-<h1>🌱 CropLabel <small>Installation &amp; User Guide — SAM3.1-assisted crop / weed / soil labeling for plot images · v1.0 · August 2026</small></h1>
+<h1>🌱 CropLabel <small>Installation &amp; User Guide — SAM3.1-assisted crop / weed / soil labeling for plot images · v1.1 · August 2026</small></h1>
 
 <div class="toc">
 <b>Contents</b>
@@ -157,31 +157,69 @@ shown above.</div>
   <li><b>Label weeds</b> (if any): select the <b>Weed</b> class, ⭐ click one
       weed. Or use the 🤖 Find box: type what the weed looks like
       (e.g. <i>broad leaf plant</i>) and press Enter.</li>
-  <li><b>Fix the details:</b> 🗑 deletes a wrong instance, 🏷 flips an
-      instance between crop and weed, ✚ adds a single missed plant, 🖌/⌫
-      paint/erase pixels manually. <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes anything.</li>
+  <li><b>Review what the auto-label produced.</b> Tick <b>Instance numbers</b>
+      and/or <b>Bounding boxes</b> in the option bar to see every plant's id and
+      extent; tick <b>Side by side</b> to see the original image next to the
+      annotated one. Move around with the mouse wheel (zoom), ✋ hand tool /
+      right-drag / <kbd>Space</kbd>+drag (pan), <kbd>F</kbd> (fit).</li>
+  <li><b>Correct the mistakes</b> with the Fix tools (section 6b):
+      <b>select</b> an instance (➚ or <kbd>Alt</kbd>+click), then 🖌 <b>brush
+      missing pixels into it</b>, ✂ <b>split</b> it when two plants were merged
+      (drag a line across, or click one seed per plant), ⛓ merge, 🗑 delete,
+      🏷 reclassify. Draw a missed plant with the ⬠ <b>polygon</b> tool (click
+      its corners). <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes anything (25 steps).</li>
   <li><b>💾 Save</b> (or <kbd>Ctrl</kbd>+<kbd>S</kbd>) — writes all label files
-      and retrains the crop-vs-weed classifier with your instances. Switching
-      image auto-saves, so nothing is lost.</li>
+      (plus the bounding-box files if <b>Save bbox files</b> is ticked), records
+      the <b>summary statistics</b> (instance counts, plants / m², greenness
+      ratio …, section 10b) and retrains the crop-vs-weed classifier with your
+      instances. Switching image auto-saves, so nothing is lost.</li>
   <li>After 2–3 reviewed images, press <b>⚡ Label ALL remaining</b> and let
       the folder label itself, then review the blue images.</li>
 </ol>
 
 <h2>6. All tools reference</h2>
+<p>The toolbar is grouped: <b>SAM</b> (automatic), <b>Create</b> (draw new
+labels by hand), <b>Fix</b> (correct existing instances) and <b>View</b>
+(move / zoom). Every tool shows a one-line hint in the top-left corner of the
+canvas when active.</p>
+<h3>6a. SAM &amp; Create tools</h3>
 <table>
 <tr><th style="width:16mm">Tool</th><th style="width:12mm">Key</th><th>What it does</th></tr>
 <tr><td class="tool">⭐</td><td>1</td><td><b>Find similar</b> — click ONE example plant (or drag a box around it): SAM3.1 labels every similar plant in the image as separate instances of the selected class. <kbd>Shift</kbd>+click = negative example (something it must NOT label). Examples accumulate and refine each other; ⭐✖ clears them.</td></tr>
 <tr><td class="tool">✚</td><td>2</td><td><b>Add one</b> — labels just the single plant under the click as one instance (no search).</td></tr>
-<tr><td class="tool">🗑</td><td>3</td><td><b>Delete</b> — removes the instance under the click (pixels return to soil/unlabeled).</td></tr>
-<tr><td class="tool">🏷</td><td>4</td><td><b>Reclassify</b> — the clicked instance becomes the selected class (crop ↔ weed).</td></tr>
-<tr><td class="tool">🖌</td><td>5</td><td><b>Brush</b> — paint the selected class by hand (semantic only; size slider in the toolbar).</td></tr>
-<tr><td class="tool">⌫</td><td>6</td><td><b>Eraser</b> — paint back to soil; also removes instance ownership of the erased pixels.</td></tr>
+<tr><td class="tool">⬠</td><td>3</td><td><b>Polygon</b> — click the corners of a plant, then double-click or press <kbd>Enter</kbd>: the polygon becomes a <b>new instance</b> of the selected class. <kbd>Backspace</kbd> removes the last corner, <kbd>Esc</kbd> cancels. With <b>Snap polygon to vegetation</b> ticked (default) only the green pixels inside the polygon are kept, so a rough polygon gives an exact plant outline. If an instance is <i>selected</i>, the polygon is <b>added to that instance</b> instead.</td></tr>
+<tr><td class="tool">🖌</td><td>4</td><td><b>Brush</b> — with an instance <b>selected</b> it paints the missing pixels <b>into that instance</b> (the fix for partially labeled plants). Without a selection it paints the class only (semantic). Hold <kbd>Ctrl</kbd> while painting to also take pixels away from neighbouring instances. Size: slider, or <kbd>[</kbd> / <kbd>]</kbd>.</td></tr>
+<tr><td class="tool">⌫</td><td>5</td><td><b>Eraser</b> — removes pixels from the <b>selected instance only</b> (precise clean-up). With nothing selected it erases any label back to soil.</td></tr>
 </table>
-<p><b>Other controls:</b> mouse wheel = zoom · right-drag or <kbd>Space</kbd>+drag = pan ·
-<kbd>c</kbd>/<kbd>w</kbd> = select Crop/Weed class · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo ·
-<kbd>Ctrl</kbd>+<kbd>S</kbd> save · <b>Overlay</b> slider fades the label view ·
+<h3>6b. Fix tools — correcting the auto-labels</h3>
+<table>
+<tr><th style="width:16mm">Tool</th><th style="width:12mm">Key</th><th>What it does</th></tr>
+<tr><td class="tool">➚</td><td>6</td><td><b>Select</b> — click an instance: it gets a yellow outline and a small panel (→ crop / → weed / 🗑 delete / ✖). While selected: 🖌 paints into it, ⌫ erases from it, ⬠ adds to it, <kbd>Delete</kbd> removes it, <kbd>c</kbd> / <kbd>w</kbd> reclassify it, the ✂ tools split it. <kbd>Alt</kbd>+click selects with <b>any</b> tool; <kbd>Esc</kbd> deselects.</td></tr>
+<tr><td class="tool">✂</td><td>7</td><td><b>Split by line</b> — drag a line right across a merged plant (start and end outside it). The instance is cut along the line into separate instances; no gap is left.</td></tr>
+<tr><td class="tool">✂•</td><td>8</td><td><b>Split by seeds</b> — click once <b>inside each plant</b> of a merged instance (two or more seeds), then <kbd>Enter</kbd> or double-click. A watershed on the shape's distance transform splits it into one instance per seed, following the natural "neck" between the plants. Fastest way to separate 3–4 seedlings that SAM joined.</td></tr>
+<tr><td class="tool">✂▭</td><td>9</td><td><b>Split by box</b> — drag a box over the part of an instance that should be its own plant.</td></tr>
+<tr><td class="tool">⛓</td><td>0</td><td><b>Merge</b> — click the first instance, then the second: they become one instance (fixes one plant split into several).</td></tr>
+<tr><td class="tool">🗑</td><td>D</td><td><b>Delete</b> — removes the instance under the click (pixels return to soil/unlabeled).</td></tr>
+<tr><td class="tool">🏷</td><td>R</td><td><b>Reclassify</b> — the clicked instance becomes the selected class (crop ↔ weed).</td></tr>
+</table>
+<p>After a split the largest part keeps the original instance number and the
+others receive new numbers; bounding boxes and areas are recomputed after
+every edit, so the saved files always contain exactly what you see.</p>
+<h3>6c. View options and navigation</h3>
+<table>
+<tr><th style="width:40mm">Option / control</th><th>Effect</th></tr>
+<tr><td><b>Instance numbers</b></td><td>Draws each instance's id on top of the plant (also in the saved <code>_overlay.png</code>).</td></tr>
+<tr><td><b>Bounding boxes</b></td><td>Draws a class-coloured bounding box around every instance (also in the saved overlay).</td></tr>
+<tr><td><b>Save bbox files</b></td><td>On Save also writes <code>&lt;name&gt;_boxes.json</code>, <code>&lt;name&gt;_boxes.txt</code> (YOLO) and <code>&lt;name&gt;_boxes.png</code> — see section 10.</td></tr>
+<tr><td><b>Side by side</b></td><td>Shows the original image on the left and the annotated image on the right; both zoom and pan together. Tools act on the right panel.</td></tr>
+<tr><td><b>Snap polygon to vegetation</b></td><td>Polygon tool keeps only vegetation pixels inside the drawn polygon.</td></tr>
+<tr><td>✋ hand (<kbd>H</kbd>), −/+, ⤢ Fit, 1:1</td><td>Left-drag moves the image with the hand tool; right-drag, middle-drag or <kbd>Space</kbd>+drag move it with any tool. Mouse wheel zooms at the cursor, arrow keys nudge, <kbd>F</kbd> fits the image to the window.</td></tr>
+<tr><td><b>Overlay</b> slider</td><td>Fades the label view to check the underlying image.</td></tr>
+</table>
+<p><b>Other controls:</b> <kbd>c</kbd>/<kbd>w</kbd> = select Crop/Weed class ·
+<kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo · <kbd>Ctrl</kbd>+<kbd>S</kbd> save ·
 <b>✨ Auto-label</b> runs the full automatic pipeline on the current image ·
-<b>Skip</b> marks an image to ignore.</p>
+<b>Skip</b> marks an image to ignore · <b>📊 Summary</b> opens the statistics panel.</p>
 
 <h2>7. The 🤖 "Find" box — telling the labeler what to look for</h2>
 <p>The text box above the canvas sends any free-text description to SAM3.1 as
@@ -237,8 +275,29 @@ image</b>, so downstream training pipelines can pair image ↔ label by name.</p
 <tr><td><code>&lt;name&gt;_instances.png</code></td><td>16-bit instance-ID map (0 = no instance) — the instance segmentation. IDs match the JSON records.</td></tr>
 <tr><td><code>&lt;name&gt;_color.png</code></td><td>Color-coded semantic mask.</td></tr>
 <tr><td><code>&lt;name&gt;_overlay.png</code></td><td>Labels blended over the image for quick visual checks.</td></tr>
-<tr><td><code>&lt;name&gt;.json</code></td><td>Crop type, status, engine, per-class pixel percentages, and one record per instance: id, class, score, bounding box, area (all at original resolution).</td></tr>
-<tr><td><code>records.json</code></td><td>Queue status store (drives the sidebar colors).</td></tr>
+<tr><td><code>&lt;name&gt;.json</code></td><td>Crop type, status, engine, the summary statistics (section 10b), and one record per instance: id, class, score, bounding box, centroid, area (all at original resolution).</td></tr>
+<tr><td><code>&lt;name&gt;_boxes.json</code></td><td><i>Optional</i> (Save bbox files): every instance's bounding box as <code>[x0, y0, x1, y1]</code> pixels with id, class, label, area and score.</td></tr>
+<tr><td><code>&lt;name&gt;_boxes.txt</code></td><td><i>Optional</i>: the same boxes in YOLO format — one line per instance <code>class cx cy w h</code> (normalized 0–1), class 0 = crop, 1 = weed. Ready for detector training.</td></tr>
+<tr><td><code>&lt;name&gt;_boxes.png</code></td><td><i>Optional</i>: the image with numbered boxes drawn, for checking.</td></tr>
+<tr><td><code>records.json</code></td><td>Queue status store (drives the sidebar colors) — also holds every image's summary statistics.</td></tr>
+<tr><td><code>summary.csv</code></td><td>One row per labeled image with all summary statistics — open directly in Excel.</td></tr>
+</table>
+
+<h3>10b. Summary statistics</h3>
+<p>Every Save computes these for the image and writes them to
+<code>&lt;name&gt;.json</code>, <code>records.json</code> and
+<code>summary.csv</code>. The <b>📊 Summary</b> button shows the current image
+and the averages/totals over the whole dataset.</p>
+<table>
+<tr><th style="width:45mm">Statistic</th><th>Meaning</th></tr>
+<tr><td><code>n_instances</code>, <code>n_crop_instances</code>, <code>n_weed_instances</code></td><td>Number of labeled plants, by class.</td></tr>
+<tr><td><code>plants_per_m2</code>, <code>weeds_per_m2</code></td><td>Crop / weed instances divided by the image ground area. Needs the <b>GSD (mm / pixel)</b> of the input images, entered in ⚙ Setup; blank until then.</td></tr>
+<tr><td><code>image_area_m2</code>, <code>crop_cover_m2</code></td><td>Ground area of the image and of the crop pixels (needs GSD).</td></tr>
+<tr><td><code>crop_pct</code>, <code>weed_pct</code>, <code>soil_pct</code>, <code>unlabeled_pct</code></td><td>Percentage of image pixels in each class. <i>unlabeled</i> = vegetation not assigned to any instance — a quick completeness check.</td></tr>
+<tr><td><code>greenness_ratio</code></td><td>Fraction of image pixels that are living vegetation (Excess-Green index above the ExG threshold) — the canopy-cover / greenness measure.</td></tr>
+<tr><td><code>mean_exg</code>, <code>mean_exg_crop</code></td><td>Mean Excess-Green index over the whole image and over the crop pixels only (plant vigour proxy).</td></tr>
+<tr><td><code>labeled_veg_fraction</code></td><td>Share of the vegetation pixels that belong to a labeled instance (1.0 = everything green is labeled).</td></tr>
+<tr><td><code>mean_crop_area_px</code>, <code>median_crop_area_px</code>, <code>mean_crop_area_cm2</code></td><td>Plant size statistics (cm² needs GSD).</td></tr>
 </table>
 
 <h2>11. Settings reference (⚙ Setup)</h2>
@@ -248,6 +307,8 @@ image</b>, so downstream training pipelines can pair image ↔ label by name.</p
 <tr><td>Threshold</td><td>0.4</td><td>SAM3.1 confidence cut-off. Lower finds more (and more false) plants.</td></tr>
 <tr><td>ExG</td><td>0.06</td><td>Excess-Green vegetation threshold. Lower catches paler/yellowish plants as vegetation; higher pushes more into soil. Also clips every SAM instance so masks never bleed into soil.</td></tr>
 <tr><td>Min px</td><td>30</td><td>Instances smaller than this many pixels (at working resolution) are dropped as noise.</td></tr>
+<tr><td>GSD (mm / pixel)</td><td>empty</td><td>Ground sampling distance of the input images. Enables plants / m², weeds / m², crop cover m² and plant area cm² in the statistics. For a tile cut from an orthomosaic use the orthomosaic's resolution (e.g. 5 mm/px → 5).</td></tr>
+<tr><td>Instance numbers / Bounding boxes / Save bbox files / Side by side / Snap polygon</td><td>off / off / off / off / on</td><td>The option-bar checkboxes; remembered between sessions (settings.json).</td></tr>
 <tr><td>work_res</td><td>1024</td><td>Internal working resolution (settings.json). Labels are always saved at the original image size.</td></tr>
 </table>
 
@@ -259,13 +320,17 @@ image</b>, so downstream training pipelines can pair image ↔ label by name.</p
 <tr><td>Pale/yellow plants counted as soil</td><td>Lower the ExG setting (e.g. 0.03) and reopen the image.</td></tr>
 <tr><td>Stubble/straw labeled as plants</td><td>Raise ExG slightly, raise Min px, or <kbd>Shift</kbd>+click a piece of stubble as a ⭐ negative example.</td></tr>
 <tr><td>Everything labeled crop, weeds missed</td><td>Expected before the classifier has weed examples. Reclassify (🏷) a few weeds, Save, re-run auto-label / batch.</td></tr>
-<tr><td>Two touching plants merged into one instance</td><td>Delete the merged instance (🗑), then ✚ click each plant separately, or use a snug ⭐ box on one of them.</td></tr>
+<tr><td>Two or more touching plants merged into one instance</td><td>Use ✂• <b>split by seeds</b>: click once inside each plant, press <kbd>Enter</kbd>. Or drag a ✂ line across the join. (Undo if the cut is not where you wanted and try again.)</td></tr>
+<tr><td>One plant split into several instances</td><td>⛓ merge: click one part, then the other.</td></tr>
+<tr><td>Part of a plant is not labeled</td><td>Select the instance (➚ or <kbd>Alt</kbd>+click), then paint the missing part with 🖌 — it joins that instance. Or ⬠ polygon around the missing part while the instance is selected.</td></tr>
+<tr><td>A plant was missed completely</td><td>✚ click it, or draw it with ⬠ polygon (corners → Enter).</td></tr>
+<tr><td>plants / m² is empty in the summary</td><td>Enter the GSD (mm / pixel) in ⚙ Setup, Save settings, then Save the image again.</td></tr>
 <tr><td>App won't start / port in use</td><td>Only one instance at a time — port 8323. Close the other console window.</td></tr>
 <tr><td>Wrong folder scanned</td><td>⚙ Setup → check both folders → Save settings. The sidebar reloads immediately.</td></tr>
 </table>
 
 <footer>CropLabel · DPIRD — repository: github.com/appndpird/CropLabel ·
-This guide corresponds to the August 2026 build (v1.0).</footer>
+This guide corresponds to the August 2026 build (v1.1 — manual review tools, bbox export, summary statistics).</footer>
 
 </body>
 </html>
