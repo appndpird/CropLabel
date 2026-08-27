@@ -18,6 +18,15 @@ DEFAULTS = {
     "veg_gate": True,           # clip SAM instances to the vegetation mask
     "crop_types": ["barley", "wheat", "canola", "oats", "other"],
     "default_crop_type": "barley",
+    # ---- review / display options (toggled from the toolbar, persisted)
+    "show_ids": False,          # draw the instance number on top of each plant
+    "show_boxes": False,        # draw per-instance bounding boxes
+    "save_boxes": False,        # also write <name>_boxes.json / .txt (YOLO) / .png
+    "side_by_side": False,      # original image next to the annotated one
+    "snap_polygon_to_veg": True,  # polygon tool keeps only vegetation pixels
+    # ---- summary statistics
+    "gsd_mm_per_px": None,      # ground sampling distance of the INPUT images
+                                # (mm per pixel). Needed for plants per m^2.
     # semantic classes (fixed): 0=unlabeled, 1=soil, 2=crop, 3=weed
     "classes": [
         {"id": 1, "name": "soil",  "color": "#8a6a4b"},

@@ -1,9 +1,14 @@
 """CropLabel FastAPI server — agentic crop/weed/soil labeling with SAM3.1.
 
 Design: the server owns the editing state (semantic mask + instance map per
-open image). The browser sends ACTIONS (exemplar click, delete, brush, ...)
-and receives a freshly rendered overlay. All segmentation, gating and
-learning happens here in Python.
+open image). The browser sends ACTIONS (exemplar click, delete, brush, split,
+polygon, ...) and receives a freshly rendered overlay. All segmentation,
+gating and learning happens here in Python.
+
+Review workflow: ✨ auto-label (SAM3) -> review -> fix with the manual tools
+(select / polygon / brush-into-instance / split by line, seeds or box /
+merge / delete / reclassify) -> Save (writes masks, json, optional bbox files
+and the summary statistics).
 """
 import base64
 import json
@@ -16,10 +21,10 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import config
+from . import config, editing
 from .config import CLS_CROP, CLS_SOIL, CLS_UNLABELED, CLS_WEED
 from .classifier import CropWeedClassifier
-from .labelstore import LabelStore, colorize
+from .labelstore import LabelStore, colorize, draw_annotations
 from .sam_engine import Sam3NativeEngine
 from .vegetation import scan_dataset, vegetation_mask
 
@@ -32,6 +37,9 @@ engine = Sam3NativeEngine(settings["sam3_ckpt"],
 clf = CropWeedClassifier()
 _store = None
 _store_lock = threading.Lock()
+
+VIEW_KEYS = ("show_ids", "show_boxes", "save_boxes", "side_by_side",
+             "snap_polygon_to_veg")
 
 
 def store() -> LabelStore:
@@ -56,6 +64,14 @@ def jpg_b64(arr: np.ndarray, q: int = 90) -> str:
     return base64.b64encode(buf.tobytes()).decode()
 
 
+def save_options() -> dict:
+    return {"show_ids": settings.get("show_ids", False),
+            "show_boxes": settings.get("show_boxes", False),
+            "save_boxes": settings.get("save_boxes", False),
+            "exg_thresh": float(settings["exg_thresh"]),
+            "gsd_mm_per_px": settings.get("gsd_mm_per_px")}
+
+
 # ---------------------------------------------------------------------------
 # Editing state (server-side, one image at a time)
 # ---------------------------------------------------------------------------
@@ -76,18 +92,20 @@ class EditState:
         self.veg = vegetation_mask(self.img, float(settings["exg_thresh"]))
         self.sem = np.where(self.veg, CLS_UNLABELED, CLS_SOIL).astype(np.uint8)
         self.inst = np.zeros((self.h, self.w), np.uint16)
-        self.meta = {}          # id -> {class, score, source}
+        self.meta = {}          # id -> {class, score, source, bbox}
         self.next_id = 1
         self.crop_type = settings.get("default_crop_type", "barley")
         self.pos_boxes, self.neg_boxes = [], []   # exemplar memory (this img)
         self.undo, self.redo = [], []
         self.dirty = False
+        self.selected: int | None = None          # instance being edited
 
     # ------------------------------------------------------------- history
     def push_undo(self):
         self.undo.append((self.sem.copy(), self.inst.copy(),
-                          dict(self.meta), self.next_id))
-        if len(self.undo) > 15:
+                          {k: dict(v) for k, v in self.meta.items()},
+                          self.next_id))
+        if len(self.undo) > 25:
             self.undo.pop(0)
         self.redo = []
 
@@ -96,6 +114,7 @@ class EditState:
             return False
         self.redo.append((self.sem, self.inst, self.meta, self.next_id))
         self.sem, self.inst, self.meta, self.next_id = self.undo.pop()
+        self._check_selected()
         return True
 
     def do_redo(self):
@@ -103,15 +122,32 @@ class EditState:
             return False
         self.undo.append((self.sem, self.inst, self.meta, self.next_id))
         self.sem, self.inst, self.meta, self.next_id = self.redo.pop()
+        self._check_selected()
         return True
 
+    def _check_selected(self):
+        if self.selected is not None and self.selected not in self.meta:
+            self.selected = None
+
     # ----------------------------------------------------------- instances
+    def refresh_meta(self, iid: int):
+        """Recompute bbox/area after the instance mask changed."""
+        st = editing.instance_stats(self.inst == iid)
+        if st["area_px"] == 0:
+            self.meta.pop(iid, None)
+            if self.selected == iid:
+                self.selected = None
+            return
+        self.meta[iid]["bbox"] = st["bbox"]
+        self.meta[iid]["area_px"] = st["area_px"]
+
     def add_instance(self, mask: np.ndarray, cls: int, score: float,
-                     source: str) -> int | None:
-        if settings.get("veg_gate", True):
-            gate = cv2.dilate(self.veg.astype(np.uint8),
-                              np.ones((5, 5), np.uint8)) > 0
-            mask = mask & gate
+                     source: str, gate: bool | None = None) -> int | None:
+        gate = settings.get("veg_gate", True) if gate is None else gate
+        if gate:
+            g = cv2.dilate(self.veg.astype(np.uint8),
+                           np.ones((5, 5), np.uint8)) > 0
+            mask = mask & g
         if mask.sum() < int(settings.get("min_instance_px", 30)):
             return None
         # claim only pixels not already owned by another instance
@@ -122,11 +158,21 @@ class EditState:
         self.next_id += 1
         self.inst[mask] = iid
         self.sem[mask] = cls
-        ys, xs = np.nonzero(mask)
         self.meta[iid] = {"id": iid, "class": int(cls),
-                          "score": round(float(score), 3), "source": source,
-                          "bbox": [int(xs.min()), int(ys.min()),
-                                   int(xs.max() + 1), int(ys.max() + 1)]}
+                          "score": round(float(score), 3), "source": source}
+        self.refresh_meta(iid)
+        return iid
+
+    def add_part(self, mask: np.ndarray, cls: int, source: str) -> int:
+        """Register an already-owned mask as a new instance (used by split;
+        no gating, no minimum)."""
+        iid = self.next_id
+        self.next_id += 1
+        self.inst[mask] = iid
+        self.sem[mask] = cls
+        self.meta[iid] = {"id": iid, "class": int(cls), "score": 1.0,
+                          "source": source}
+        self.refresh_meta(iid)
         return iid
 
     def remove_instance(self, iid: int):
@@ -134,6 +180,8 @@ class EditState:
         self.inst[m] = 0
         self.sem[m] = np.where(self.veg[m], CLS_UNLABELED, CLS_SOIL)
         self.meta.pop(iid, None)
+        if self.selected == iid:
+            self.selected = None
 
     def reclass_instance(self, iid: int, cls: int):
         m = self.inst == iid
@@ -141,8 +189,81 @@ class EditState:
         if iid in self.meta:
             self.meta[iid]["class"] = int(cls)
 
+    def grow_instance(self, iid: int, mask: np.ndarray, steal: bool = False):
+        """Add pixels to an existing instance (brush / polygon into selected).
+        By default pixels owned by OTHER instances are left alone."""
+        if iid not in self.meta:
+            return 0
+        if not steal:
+            mask = mask & ((self.inst == 0) | (self.inst == iid))
+        n = int((mask & (self.inst != iid)).sum())
+        self.inst[mask] = iid
+        self.sem[mask] = self.meta[iid]["class"]
+        self.refresh_meta(iid)
+        return n
+
+    def shrink_instance(self, iid: int, mask: np.ndarray):
+        m = mask & (self.inst == iid)
+        self.inst[m] = 0
+        self.sem[m] = np.where(self.veg[m], CLS_UNLABELED, CLS_SOIL)
+        self.refresh_meta(iid)
+        return int(m.sum())
+
+    def split_instance(self, iid: int, parts: list, source: str) -> list:
+        """Replace instance `iid` by `parts` (list of bool masks). The largest
+        part keeps the original id."""
+        if iid not in self.meta or len(parts) < 2:
+            return [iid]
+        cls = self.meta[iid]["class"]
+        parts = sorted(parts, key=lambda p: -int(p.sum()))
+        whole = self.inst == iid
+        self.inst[whole] = 0
+        self.inst[parts[0]] = iid
+        self.meta[iid]["source"] = source
+        self.refresh_meta(iid)
+        ids = [iid]
+        for p in parts[1:]:
+            ids.append(self.add_part(p, cls, source))
+        # any leftover pixels of the old instance not covered by a part
+        leftover = whole & (self.inst == 0)
+        if leftover.any():
+            self.sem[leftover] = np.where(self.veg[leftover], CLS_UNLABELED, CLS_SOIL)
+        return ids
+
+    def merge_instances(self, keep: int, other: int):
+        if keep not in self.meta or other not in self.meta or keep == other:
+            return False
+        m = self.inst == other
+        self.inst[m] = keep
+        self.sem[m] = self.meta[keep]["class"]
+        self.meta.pop(other, None)
+        self.refresh_meta(keep)
+        return True
+
+    def instance_at(self, x, y) -> int:
+        if x is None or y is None:
+            return 0
+        xi, yi = int(x), int(y)
+        if 0 <= yi < self.h and 0 <= xi < self.w:
+            return int(self.inst[yi, xi])
+        return 0
+
     def instances_meta(self) -> list:
         return [dict(v) for v in self.meta.values()]
+
+    def counts(self) -> dict:
+        return {"n_instances": len(self.meta),
+                "n_crop": sum(1 for m in self.meta.values() if m["class"] == CLS_CROP),
+                "n_weed": sum(1 for m in self.meta.values() if m["class"] == CLS_WEED)}
+
+    def selected_info(self) -> dict | None:
+        if self.selected is None or self.selected not in self.meta:
+            return None
+        m = self.meta[self.selected]
+        return {"id": self.selected, "class": m["class"],
+                "class_name": "crop" if m["class"] == CLS_CROP else "weed",
+                "area_px": m.get("area_px"), "bbox": m.get("bbox"),
+                "source": m.get("source")}
 
     # ------------------------------------------------------------ rendering
     def overlay(self) -> np.ndarray:
@@ -155,6 +276,16 @@ class EditState:
         edges[:, :-1] |= (ii[:, :-1] != ii[:, 1:])
         edges &= ii > 0
         out[edges] = (255, 255, 255)
+        # selected instance: thick yellow outline
+        if self.selected is not None and self.selected in self.meta:
+            sel = (ii == self.selected).astype(np.uint8)
+            cnts, _ = cv2.findContours(sel, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            cv2.drawContours(out, cnts, -1, (0, 255, 255), 2)
+        draw_annotations(out, list(self.meta.values()),
+                         bool(settings.get("show_ids")),
+                         bool(settings.get("show_boxes")),
+                         selected=self.selected,
+                         scale=max(1.0, max(self.h, self.w) / 1024.0))
         return out
 
 
@@ -177,11 +308,19 @@ def state_of(key: str, fresh: bool = False) -> EditState:
             st.inst = (inst if inst is not None
                        else np.zeros((st.h, st.w), np.uint16)).astype(np.uint16)
             for m in (meta or {}).get("instances", []):
-                st.meta[int(m["id"])] = {"id": int(m["id"]),
-                                         "class": int(m["class"]),
-                                         "score": m.get("score", 1.0),
-                                         "source": m.get("source", "saved"),
-                                         "bbox": m.get("bbox")}
+                iid = int(m["id"])
+                st.meta[iid] = {"id": iid, "class": int(m["class"]),
+                                "score": m.get("score", 1.0),
+                                "source": m.get("source", "saved")}
+                st.refresh_meta(iid)
+            # instances present in the map but missing from the json
+            for iid in np.unique(st.inst):
+                iid = int(iid)
+                if iid and iid not in st.meta:
+                    cls = int(np.bincount(st.sem[st.inst == iid]).argmax())
+                    st.meta[iid] = {"id": iid, "class": cls if cls in (CLS_CROP, CLS_WEED) else CLS_CROP,
+                                    "score": 1.0, "source": "saved"}
+                    st.refresh_meta(iid)
             st.next_id = max(list(st.meta) + [0]) + 1
             st.crop_type = (meta or {}).get("crop_type", st.crop_type)
         if len(_states) > 2:
@@ -252,6 +391,7 @@ def run_autolabel(st: EditState) -> str:
     st.inst[:] = 0
     st.meta.clear()
     st.next_id = 1
+    st.selected = None
     inst = sam_text_instances(st, settings.get("plant_prompts", ["plant"]),
                               threshold=float(settings["native_threshold"]))
     n = apply_instances(st, inst, None, "autolabel")
@@ -278,6 +418,13 @@ class ConfigIn(BaseModel):
     exg_thresh: float | None = None
     min_instance_px: int | None = None
     default_crop_type: str | None = None
+    show_ids: bool | None = None
+    show_boxes: bool | None = None
+    save_boxes: bool | None = None
+    side_by_side: bool | None = None
+    snap_polygon_to_veg: bool | None = None
+    gsd_mm_per_px: float | None = None
+    clear_gsd: bool | None = None
 
 
 @app.get("/api/config")
@@ -287,7 +434,10 @@ def get_config():
 
 @app.post("/api/config")
 def set_config(body: ConfigIn):
-    for k, v in body.model_dump(exclude_none=True).items():
+    d = body.model_dump(exclude_none=True)
+    if d.pop("clear_gsd", False):
+        settings["gsd_mm_per_px"] = None
+    for k, v in d.items():
         settings[k] = v
     config.save_settings(settings)
     return settings
@@ -334,11 +484,23 @@ def model_status():
             "crop_types": settings["crop_types"]}
 
 
+@app.get("/api/summary")
+def summary():
+    """Dataset-level labeling summary (all reviewed + auto images)."""
+    return store().summary()
+
+
 # ---------------------------------------------------------------------------
 # Open / actions
 # ---------------------------------------------------------------------------
 class KeyIn(BaseModel):
     key: str
+
+
+def _response(st: EditState, msg: str) -> dict:
+    return {"overlay_b64": jpg_b64(st.overlay()), "msg": msg,
+            **st.counts(), "selected": st.selected_info(),
+            "veg_pct": round(100.0 * float(st.veg.mean()), 2)}
 
 
 @app.post("/api/open")
@@ -349,11 +511,10 @@ def open_image(body: KeyIn):
         return JSONResponse({"error": "unknown key"}, 404)
     return {"key": st.key, "w": st.w, "h": st.h,
             "img_b64": jpg_b64(st.img),
-            "overlay_b64": jpg_b64(st.overlay()),
             "crop_type": st.crop_type,
             "status": store().status_of(st.key),
-            "n_instances": len(st.meta),
-            "veg_pct": round(100.0 * float(st.veg.mean()), 2)}
+            "record": store().records().get(st.key),
+            **_response(st, "")}
 
 
 class ActIn(BaseModel):
@@ -366,9 +527,14 @@ class ActIn(BaseModel):
     negative: bool = False
     prompt: str | None = None
     threshold: float | None = None
-    path: list | None = None         # brush polyline [[x,y],...]
+    path: list | None = None         # polyline / polygon [[x,y],...]
+    points: list | None = None       # seed points for split_points
     radius: float | None = None
     crop_type: str | None = None
+    iid: int | None = None           # explicit instance id (select/merge)
+    to_selected: bool = False        # brush adds to the selected instance
+    snap: bool | None = None         # polygon: keep vegetation pixels only
+    steal: bool = False              # brush/polygon may take pixels of others
 
 
 _act_lock = threading.Lock()
@@ -380,6 +546,10 @@ def act(body: ActIn):
         return _act(body)
 
 
+def _cls_name(c):
+    return "crop" if c == CLS_CROP else "weed"
+
+
 def _act(body: ActIn):
     try:
         st = state_of(body.key)
@@ -387,7 +557,27 @@ def _act(body: ActIn):
         return JSONResponse({"error": "unknown key"}, 404)
     a = body.action
     msg = ""
+    min_px = int(settings.get("min_instance_px", 30))
 
+    # ------------------------------------------------------------ selection
+    if a == "select":
+        iid = body.iid if body.iid is not None else st.instance_at(body.x, body.y)
+        if iid and iid in st.meta:
+            st.selected = iid
+            m = st.meta[iid]
+            msg = (f"selected instance {iid} ({_cls_name(m['class'])}, "
+                   f"{m.get('area_px', 0)} px) — brush/polygon now ADD to it; "
+                   f"✂ tools split it; Delete removes it")
+        else:
+            st.selected = None
+            msg = "selection cleared"
+        return _response(st, msg)   # no dirty flag, no undo
+
+    if a == "deselect":
+        st.selected = None
+        return _response(st, "selection cleared")
+
+    # -------------------------------------------------------------- SAM
     if a == "exemplar":
         # click or box on ONE example plant -> find all similar
         box = body.box or lesion_box_at(st, body.x, body.y)
@@ -405,56 +595,11 @@ def _act(body: ActIn):
                 st.remove_instance(iid)
             inst = sam_exemplar_instances(st, threshold=body.threshold)
             n = apply_instances(st, inst, body.cls, f"exemplar:{body.cls}")
-            msg = (f"⭐ {n} similar plants labeled as "
-                   f"{'crop' if body.cls == CLS_CROP else 'weed'} "
+            msg = (f"⭐ {n} similar plants labeled as {_cls_name(body.cls)} "
                    f"({len(st.pos_boxes)}+ {len(st.neg_boxes)}- examples)")
     elif a == "exemplar_reset":
         st.pos_boxes, st.neg_boxes = [], []
         msg = "exemplar examples cleared"
-    elif a == "add_one":
-        # segment just the plant under the click as ONE instance
-        box = lesion_box_at(st, body.x, body.y)
-        st.push_undo()
-        m = np.zeros((st.h, st.w), bool)
-        x0, y0, x1, y1 = (int(v) for v in box)
-        sub = st.veg[y0:y1, x0:x1]
-        m[y0:y1, x0:x1] = sub
-        iid = st.add_instance(m, body.cls or CLS_CROP, 1.0, "manual")
-        msg = "plant added" if iid else "nothing under that click (no vegetation)"
-    elif a == "delete":
-        iid = int(st.inst[int(body.y), int(body.x)])
-        if iid:
-            st.push_undo()
-            st.remove_instance(iid)
-            msg = f"instance {iid} deleted"
-        else:
-            msg = "no instance under that click"
-    elif a == "reclass":
-        iid = int(st.inst[int(body.y), int(body.x)])
-        if iid and body.cls in (CLS_CROP, CLS_WEED):
-            st.push_undo()
-            st.reclass_instance(iid, body.cls)
-            msg = f"instance {iid} → {'crop' if body.cls == CLS_CROP else 'weed'}"
-        else:
-            msg = "no instance under that click"
-    elif a == "brush":
-        st.push_undo()
-        r = int(body.radius or 10)
-        cls = body.cls if body.cls is not None else CLS_CROP
-        stamp = np.zeros((st.h, st.w), np.uint8)
-        pts = np.array(body.path or [], np.int32)
-        for i in range(len(pts)):
-            cv2.circle(stamp, tuple(pts[i]), r, 1, -1)
-            if i:
-                cv2.line(stamp, tuple(pts[i - 1]), tuple(pts[i]), 1, r * 2)
-        m = stamp > 0
-        st.sem[m] = cls
-        if cls == CLS_SOIL:            # erasing removes instance ownership
-            st.inst[m] = 0
-            gone = set(st.meta) - set(np.unique(st.inst))
-            for iid in gone:
-                st.meta.pop(iid, None)
-        msg = "painted"
     elif a == "text_prompt":
         if not body.prompt:
             return JSONResponse({"error": "empty prompt"}, 400)
@@ -469,11 +614,165 @@ def _act(body: ActIn):
             return JSONResponse({"error": f"SAM3.1 unavailable ({engine.error})"}, 503)
         st.push_undo()
         msg = run_autolabel(st)
+
+    # ----------------------------------------------------- create instances
+    elif a == "add_one":
+        # segment just the plant under the click as ONE instance
+        box = lesion_box_at(st, body.x, body.y)
+        st.push_undo()
+        m = np.zeros((st.h, st.w), bool)
+        x0, y0, x1, y1 = (int(v) for v in box)
+        m[y0:y1, x0:x1] = st.veg[y0:y1, x0:x1]
+        iid = st.add_instance(m, body.cls or CLS_CROP, 1.0, "manual")
+        if iid:
+            st.selected = iid
+            msg = f"plant added as instance {iid}"
+        else:
+            msg = "nothing under that click (no vegetation)"
+    elif a == "polygon":
+        # user clicked the corners of a plant -> new instance (or add to selected)
+        pts = body.path or []
+        if len(pts) < 3:
+            return JSONResponse({"error": "need at least 3 corners"}, 400)
+        poly = editing.polygon_mask((st.h, st.w), pts)
+        snap = settings.get("snap_polygon_to_veg", True) if body.snap is None else body.snap
+        mask = poly
+        if snap:
+            g = cv2.dilate(st.veg.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+            snapped = poly & g
+            # if the polygon holds (almost) no vegetation, keep the raw polygon
+            mask = snapped if snapped.sum() >= max(10, 0.05 * poly.sum()) else poly
+        st.push_undo()
+        if body.to_selected and st.selected in st.meta:
+            n = st.grow_instance(st.selected, mask, steal=body.steal)
+            msg = f"+{n} px added to instance {st.selected}"
+        else:
+            if body.steal:
+                # take the polygon area away from whoever owns it
+                owners = [int(i) for i in np.unique(st.inst[mask]) if i]
+                st.inst[mask] = 0
+                for o in owners:
+                    st.refresh_meta(o)
+            iid = st.add_instance(mask, body.cls or CLS_CROP, 1.0, "polygon",
+                                  gate=False)
+            if iid:
+                st.selected = iid
+                msg = (f"polygon → new {_cls_name(body.cls or CLS_CROP)} instance {iid} "
+                       f"({int((st.inst == iid).sum())} px"
+                       f"{', snapped to vegetation' if snap and mask is not poly else ''})")
+            else:
+                msg = ("polygon too small or fully inside existing instances "
+                       "(select an instance first to add to it, or use ⌫ eraser)")
+
+    # ------------------------------------------------------ brush / eraser
+    elif a == "brush":
+        r = int(body.radius or 10)
+        stamp = editing.paint_stamp((st.h, st.w), body.path, r)
+        st.push_undo()
+        cls = body.cls if body.cls is not None else CLS_CROP
+        if cls == CLS_SOIL:
+            # eraser: remove pixels (from the selected instance only, if one
+            # is selected — precise cleanup; otherwise from anything)
+            if st.selected in st.meta:
+                n = st.shrink_instance(st.selected, stamp)
+                msg = f"erased {n} px from instance {st.selected}"
+            else:
+                st.sem[stamp] = CLS_SOIL
+                touched = [int(i) for i in np.unique(st.inst[stamp]) if i]
+                st.inst[stamp] = 0
+                for iid in touched:
+                    st.refresh_meta(iid)
+                msg = "erased to soil"
+        elif st.selected in st.meta and body.to_selected:
+            n = st.grow_instance(st.selected, stamp, steal=body.steal)
+            msg = f"+{n} px painted into instance {st.selected}"
+        else:
+            # no instance selected: paint semantic class on free pixels only
+            free = stamp & (st.inst == 0)
+            st.sem[free] = cls
+            msg = (f"painted {_cls_name(cls)} (semantic only — select an "
+                   f"instance to paint INTO it, or use polygon to create one)")
+
+    # ------------------------------------------------------------- splits
+    elif a in ("split_line", "split_points", "split_box"):
+        iid = st.selected if st.selected in st.meta else None
+        if iid is None:
+            # infer from the geometry: instance under the first point / box centre
+            if a == "split_box" and body.box:
+                cx, cy = (body.box[0] + body.box[2]) / 2, (body.box[1] + body.box[3]) / 2
+                iid = st.instance_at(cx, cy) or None
+            else:
+                pts = body.points or body.path or []
+                for x, y in pts:
+                    iid = st.instance_at(x, y)
+                    if iid:
+                        break
+                iid = iid or None
+        if iid is None:
+            return JSONResponse({"error": "select (or draw on) an instance to split"}, 400)
+        whole = st.inst == iid
+        if a == "split_line":
+            parts = editing.split_by_line(whole, body.path or [],
+                                          width=max(2, int(body.radius or 3)),
+                                          min_px=max(5, min_px // 3))
+        elif a == "split_points":
+            parts = editing.split_by_points(whole, body.points or [],
+                                            min_px=max(5, min_px // 3))
+        else:
+            parts = editing.split_by_box(whole, body.box or [0, 0, 0, 0],
+                                         min_px=max(5, min_px // 3))
+        if len(parts) < 2:
+            hint = {"split_line": "the line must cross the plant completely",
+                    "split_points": "click one seed INSIDE each plant (2+)",
+                    "split_box": "the box must cover part of the plant, not all"}[a]
+            return _response(st, f"nothing to split — {hint}")
+        st.push_undo()
+        ids = st.split_instance(iid, parts, source=a)
+        st.selected = None
+        msg = f"✂ instance {iid} split into {len(ids)}: {ids}"
+
+    # --------------------------------------------------------------- merge
+    elif a == "merge":
+        other = st.instance_at(body.x, body.y) if body.iid is None else body.iid
+        if st.selected in st.meta and other and other != st.selected:
+            st.push_undo()
+            st.merge_instances(st.selected, other)
+            msg = f"merged instance {other} into {st.selected}"
+        elif other:
+            st.selected = other
+            msg = f"instance {other} selected — now click the instance to merge into it"
+        else:
+            msg = "no instance under that click"
+
+    # ------------------------------------------------------ delete / class
+    elif a == "delete":
+        iid = body.iid if body.iid is not None else st.instance_at(body.x, body.y)
+        if not iid and st.selected in st.meta and body.x is None:
+            iid = st.selected
+        if iid and iid in st.meta:
+            st.push_undo()
+            st.remove_instance(iid)
+            msg = f"instance {iid} deleted"
+        else:
+            msg = "no instance under that click"
+    elif a == "reclass":
+        iid = body.iid if body.iid is not None else st.instance_at(body.x, body.y)
+        if not iid and st.selected in st.meta and body.x is None:
+            iid = st.selected
+        if iid and iid in st.meta and body.cls in (CLS_CROP, CLS_WEED):
+            st.push_undo()
+            st.reclass_instance(iid, body.cls)
+            msg = f"instance {iid} → {_cls_name(body.cls)}"
+        else:
+            msg = "no instance under that click"
+
+    # --------------------------------------------------------------- misc
     elif a == "soil_only":
         st.push_undo()
         st.sem = np.where(st.veg, CLS_UNLABELED, CLS_SOIL).astype(np.uint8)
         st.inst[:] = 0
         st.meta.clear()
+        st.selected = None
         msg = "reset to auto-soil"
     elif a == "set_crop_type":
         st.crop_type = body.crop_type or st.crop_type
@@ -482,14 +781,13 @@ def _act(body: ActIn):
         msg = "undone" if st.do_undo() else "nothing to undo"
     elif a == "redo":
         msg = "redone" if st.do_redo() else "nothing to redo"
+    elif a == "render":
+        return _response(st, "")       # re-render after a view option change
     else:
         return JSONResponse({"error": f"unknown action {a}"}, 400)
 
     st.dirty = True
-    return {"overlay_b64": jpg_b64(st.overlay()), "msg": msg,
-            "n_instances": len(st.meta),
-            "n_crop": sum(1 for m in st.meta.values() if m["class"] == CLS_CROP),
-            "n_weed": sum(1 for m in st.meta.values() if m["class"] == CLS_WEED)}
+    return _response(st, msg)
 
 
 class SaveIn(BaseModel):
@@ -505,16 +803,28 @@ def save(body: SaveIn):
         st.crop_type = body.crop_type
     rec = store().save(st.key, st.img_path, st.sem, st.inst,
                        st.instances_meta(), st.crop_type,
-                       "sam3.1+human", status=body.status)
+                       "sam3.1+human", status=body.status,
+                       options=save_options())
     st.dirty = False
     clf.maybe_retrain(store(), images(), int(settings["work_res"]))
-    return {"ok": True, "record": rec, "classifier": clf.status()}
+    return {"ok": True, "record": rec, "classifier": clf.status(),
+            "summary": store().summary()}
 
 
 @app.post("/api/skip")
 def skip(body: KeyIn):
     store().mark_skipped(body.key)
     return {"ok": True}
+
+
+@app.get("/api/instances")
+def list_instances(key: str):
+    try:
+        st = state_of(key)
+    except KeyError:
+        return JSONResponse({"error": "unknown key"}, 404)
+    return {"instances": sorted(st.instances_meta(), key=lambda m: m["id"]),
+            "selected": st.selected}
 
 
 # ---------------------------------------------------------------------------
@@ -538,7 +848,7 @@ def _batch_worker(keys):
             store().save(key, st.img_path, st.sem, st.inst,
                          st.instances_meta(),
                          settings.get("default_crop_type", "barley"),
-                         "sam3.1-auto", status="auto")
+                         "sam3.1-auto", status="auto", options=save_options())
         except Exception as e:
             with _batch_lock:
                 _batch["errors"].append(f"{key}: {e}")
