@@ -15,3 +15,6 @@ build/
 dist/
 *.zip
 *.tar.gz
+
+# local clones / copies
+Updated Version/
