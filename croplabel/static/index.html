@@ -139,6 +139,8 @@
   <div class="row"><label title="Ground sampling distance of the INPUT images in mm per pixel. Needed to report plants per m². Leave empty if unknown.">GSD (mm / pixel)</label>
     <input type="number" id="inGsd" min="0" step="0.01" style="width:100px" placeholder="e.g. 0.5">
     <span style="color:var(--dim);font-size:12px">→ enables plants / m², weeds / m², crop cover m² in the summary</span>
+    <label style="width:auto;margin-left:16px" title="After auto-label, instances larger than this × the median plant area are split automatically at the plant crowns. 0 = off. Lower = split more aggressively.">Auto-split ×</label>
+    <input type="number" id="inAutoSplit" min="0" max="10" step="0.1" style="width:70px">
     <span style="flex:1"></span>
     <button id="btnSaveCfg" class="primary">Save settings</button></div>
 </div>
@@ -179,6 +181,7 @@
         <button class="tool" data-tool="splitline" title="SPLIT BY LINE: drag a line across a merged plant — it is cut into separate instances along the line">✂<span class="k">7</span></button>
         <button class="tool" data-tool="splitpoints" title="SPLIT BY SEEDS: click once inside EACH plant of a merged instance, then Enter (or double-click) — watershed splits it into one instance per seed">✂•<span class="k">8</span></button>
         <button class="tool" data-tool="splitbox" title="SPLIT BY BOX: drag a box over the part of an instance that should become its own plant">✂▭<span class="k">9</span></button>
+        <button class="tool" data-tool="splitauto" title="AUTO SPLIT: click an over-merged instance — it is split automatically at the plant crowns (distance-transform peaks). Shift+click asks how many plants.">✂A<span class="k">A</span></button>
         <button class="tool" data-tool="merge" title="MERGE: click the first instance, then the second → one instance">⛓<span class="k">0</span></button>
         <button class="tool" data-tool="delete" title="Delete the instance under the click">🗑<span class="k">D</span></button>
         <button class="tool" data-tool="reclass" title="Change the clicked instance to the selected class (crop ↔ weed)">🏷<span class="k">R</span></button>
@@ -275,6 +278,7 @@ const HINTS = {
   splitline:"✂ Drag a line right across the merged plant (start and end OUTSIDE it). Each side becomes its own instance.",
   splitpoints:"✂• Click one seed INSIDE each plant of the merged instance (2+), then Enter or double-click. Esc cancels.",
   splitbox:"✂▭ Drag a box around the part that should be a separate plant.",
+  splitauto:"✂A Click an over-merged instance → split automatically at the plant crowns. Shift+click to tell it how many plants it contains.",
   merge:"⛓ Click the first instance, then the one to merge into it.",
   delete:"🗑 Click an instance to delete it.",
   reclass:"🏷 Click an instance to change it to the selected class.",
@@ -337,7 +341,9 @@ function render(){
     for (const p of S.poly) ctx.lineTo(p[0], p[1]);
     if (S.hover) ctx.lineTo(S.hover.x, S.hover.y);
     ctx.closePath(); ctx.fill(); ctx.stroke();
-    for (const p of S.poly){ ctx.beginPath(); ctx.arc(p[0], p[1], 3/S.zoom, 0, 7); ctx.fillStyle = "#ffd21f"; ctx.fill(); }
+    S.poly.forEach((p, i) => { ctx.beginPath(); ctx.arc(p[0], p[1], (i ? 3 : 6)/S.zoom, 0, 7);
+      ctx.fillStyle = i ? "#ffd21f" : "#fff"; ctx.fill();
+      if (!i){ ctx.strokeStyle = "#ffd21f"; ctx.lineWidth = 2/S.zoom; ctx.stroke(); } });
   }
   if (S.seeds.length){
     S.seeds.forEach((p, i) => {
@@ -397,7 +403,12 @@ async function commitSeeds(){
 }
 
 // ------------------------------------------------------------------ input
-cv.addEventListener("contextmenu", e => e.preventDefault());
+cv.addEventListener("contextmenu", e => {
+  e.preventDefault();
+  // right-click finishes a polygon / seed set instead of panning when one is in progress
+  if (S.poly.length >= 3) commitPolygon();
+  else if (S.seeds.length >= 2) commitSeeds();
+});
 cv.addEventListener("wheel", e => {
   e.preventDefault();
   const f = e.deltaY < 0 ? 1.15 : 1/1.15;
@@ -425,7 +436,13 @@ cv.addEventListener("mousedown", e => {
   } else if (t === "exemplar" || t === "splitbox"){
     S.boxStart = p; S.boxCur = p; S.exNeg = e.shiftKey;
   } else if (t === "polygon"){
+    // clicking the first corner again closes the polygon
+    if (S.poly.length >= 3){
+      const [fx, fy] = S.poly[0], r = 10 / S.zoom;
+      if (Math.hypot(p.x - fx, p.y - fy) <= r){ commitPolygon(); return; }
+    }
     S.poly.push([p.x, p.y]); render();
+    setStatus(`${S.poly.length} corner(s) — click the first corner, double-click, right-click or press Enter to close the polygon.`);
   } else if (t === "splitpoints"){
     S.seeds.push([p.x, p.y]); render();
     setStatus(`${S.seeds.length} seed(s) — click one inside each plant, then Enter / double-click to split.`);
@@ -475,6 +492,11 @@ window.addEventListener("mouseup", async e => {
   else if (t === "reclass") await doAct({action:"reclass", x:p.x, y:p.y, cls:S.cls}, null);
   else if (t === "select") await doAct({action:"select", x:p.x, y:p.y}, null);
   else if (t === "merge") await doAct({action:"merge", x:p.x, y:p.y}, null);
+  else if (t === "splitauto"){
+    let n = null;
+    if (e.shiftKey){ const v = prompt("How many plants are in this instance?", "2"); if (v === null) return; n = +v; }
+    await doAct({action:"split_auto", x:p.x, y:p.y, n}, "Auto-splitting…");
+  }
 });
 window.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
@@ -489,7 +511,7 @@ window.addEventListener("keydown", e => {
   if (e.key === "[" ){ $("#brushSize").value = Math.max(1, +$("#brushSize").value - 2); $("#brushSize").oninput(); }
   if (e.key === "]" ){ $("#brushSize").value = Math.min(60, +$("#brushSize").value + 2); $("#brushSize").oninput(); }
   const tools = {1:"exemplar",2:"addone",3:"polygon",4:"brush",5:"eraser",6:"select",
-                 7:"splitline",8:"splitpoints",9:"splitbox",0:"merge",d:"delete",r:"reclass",h:"pan"};
+                 7:"splitline",8:"splitpoints",9:"splitbox",0:"merge",d:"delete",r:"reclass",h:"pan",a:"splitauto"};
   if (tools[e.key]) setTool(tools[e.key]);
   // ---- navigation
   const step = 60;
@@ -703,6 +725,7 @@ async function loadCfg(){
   $("#inThresh").value = c.native_threshold; $("#inExg").value = c.exg_thresh;
   $("#inMinPx").value = c.min_instance_px;
   $("#inGsd").value = c.gsd_mm_per_px ?? "";
+  $("#inAutoSplit").value = c.auto_split_factor ?? 2.5;
   for (const [id, key] of Object.entries(OPTS)) $("#" + id).checked = !!c[key];
   S.sbs = !!c.side_by_side;
   const sel = $("#selCrop"); sel.innerHTML = "";
@@ -718,6 +741,7 @@ $("#btnSaveCfg").onclick = async () => {
     native_threshold:+$("#inThresh").value, exg_thresh:+$("#inExg").value,
     min_instance_px:+$("#inMinPx").value,
     default_crop_type:$("#selCrop").value,
+    auto_split_factor:Math.max(0, +$("#inAutoSplit").value || 0),
     ...(gsd > 0 ? {gsd_mm_per_px:gsd} : {clear_gsd:true})});
   setStatus("Settings saved." + (gsd > 0 ? ` GSD ${gsd} mm/px → plants/m² will be computed on the next Save.` : "")); loadQueue();
 };
@@ -726,8 +750,13 @@ document.querySelectorAll(".browse").forEach(b => b.onclick = async () => {
   if (r.path){ $("#" + b.dataset.for).value = r.path; $("#btnSaveCfg").click(); }
 });
 
+const UI_VERSION = "1.1.1";   // must match croplabel/config.py APP_VERSION
 async function pollModel(){
   const s = await api("/api/model/status");
+  if (s.version !== UI_VERSION){
+    const m = `⚠ The running server is OLD (server ${s.version || "< 1.1"}, page ${UI_VERSION}). Close the CropLabel console window and start CropLabel.bat again — tools will not work until then.`;
+    setStatus(m); alert(m);
+  }
   const pill = $("#modelPill");
   if (s.native_loaded){ pill.textContent = "SAM3.1 ready (GPU)"; pill.className = "pill on"; }
   else if (s.native_available){ pill.textContent = "SAM3.1 available (loads on first use)"; pill.className = "pill on"; }

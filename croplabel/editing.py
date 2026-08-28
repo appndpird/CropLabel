@@ -91,23 +91,49 @@ def split_by_points(inst_mask: np.ndarray, points, min_px: int = 20) -> list:
            and inst_mask[y, x]]
     if len(pts) < 2:
         return [inst_mask]
-    dist = cv2.distanceTransform(inst_mask.astype(np.uint8), cv2.DIST_L2, 5)
-    dist = (255 * (1 - dist / max(dist.max(), 1e-6))).astype(np.uint8)
-    img3 = cv2.cvtColor(dist, cv2.COLOR_GRAY2BGR)
-    markers = np.zeros(inst_mask.shape, np.int32)
-    markers[~inst_mask] = 1                   # background marker
-    for i, (x, y) in enumerate(pts, 2):
-        cv2.circle(markers, (x, y), 3, i, -1)
-    markers[~inst_mask] = 1
-    cv2.watershed(img3, markers)
+    # work on the bounding box only (fast even for 1024px masks)
+    ys, xs = np.nonzero(inst_mask)
+    y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+    sub = inst_mask[y0:y1, x0:x1]
+    dist = cv2.distanceTransform(np.pad(sub.astype(np.uint8), 1),
+                                 cv2.DIST_L2, 5)[1:-1, 1:-1]
+    # Multi-source Dijkstra from the seeds. Stepping into a pixel costs more
+    # the closer it is to the mask edge, so the two fronts slow down at the
+    # thin neck between plants and meet there; for blob-like shapes without
+    # a neck this degrades gracefully to a nearest-seed (Voronoi) split.
+    import heapq
+    h, w = sub.shape
+    dmax = max(float(dist.max()), 1.0)
+    cost = (1.0 + 6.0 * (1.0 - dist / dmax) ** 2).astype(np.float32)
+    lab = np.zeros((h, w), np.int32)
+    best = np.full((h, w), np.inf, np.float32)
+    heap = []
+    for i, (x, y) in enumerate(pts, 1):
+        sy, sx = y - y0, x - x0
+        best[sy, sx] = 0.0
+        heapq.heappush(heap, (0.0, sy, sx, i))
+    nb = ((-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
+          (-1, -1, 1.4142), (-1, 1, 1.4142), (1, -1, 1.4142), (1, 1, 1.4142))
+    while heap:
+        d, y, x, i = heapq.heappop(heap)
+        if lab[y, x] or d > best[y, x]:
+            continue
+        lab[y, x] = i
+        for dy, dx, step in nb:
+            ny, nx = y + dy, x + dx
+            if 0 <= ny < h and 0 <= nx < w and sub[ny, nx] and not lab[ny, nx]:
+                nd = d + step * float(cost[ny, nx])
+                if nd < best[ny, nx]:
+                    best[ny, nx] = nd
+                    heapq.heappush(heap, (nd, ny, nx, i))
     parts = []
-    for i in range(2, len(pts) + 2):
-        p = (markers == i) & inst_mask
+    for i in range(1, len(pts) + 1):
+        p = np.zeros(inst_mask.shape, bool)
+        p[y0:y1, x0:x1] = (lab == i) & sub
         if p.sum() >= min_px:
             parts.append(p)
     if len(parts) < 2:
         return [inst_mask]
-    # watershed ridge lines (-1) -> hand them to the nearest part
     leftover = inst_mask & ~np.any(parts, axis=0)
     return _grow_into(parts, leftover)
 
@@ -133,3 +159,41 @@ def instance_stats(mask: np.ndarray) -> dict:
     return {"bbox": [int(xs.min()), int(ys.min()), int(xs.max() + 1), int(ys.max() + 1)],
             "area_px": int(len(xs)),
             "centroid": [float(xs.mean()), float(ys.mean())]}
+
+
+def auto_seeds(inst_mask: np.ndarray, min_dist: float) -> list:
+    """Seed points for automatic splitting: local maxima of the distance
+    transform that are at least `min_dist` apart (one per plant crown)."""
+    dist = cv2.distanceTransform(inst_mask.astype(np.uint8), cv2.DIST_L2, 5)
+    k = max(3, int(min_dist) | 1)
+    peaks = (dist == cv2.dilate(dist, np.ones((k, k), np.uint8))) & (dist > 1.0)
+    n, lab, stats, cents = cv2.connectedComponentsWithStats(peaks.astype(np.uint8), 8)
+    cand = sorted([(float(dist[int(cents[i][1]), int(cents[i][0])]),
+                    int(cents[i][0]), int(cents[i][1])) for i in range(1, n)],
+                  reverse=True)
+    seeds = []
+    for d, x, y in cand:
+        if all((x - sx) ** 2 + (y - sy) ** 2 >= min_dist ** 2 for sx, sy in seeds):
+            seeds.append((x, y))
+    return seeds
+
+
+def split_auto(inst_mask: np.ndarray, typical_area: float, min_px: int = 20,
+               n_parts: int | None = None) -> list:
+    """Split an over-merged instance automatically. Seeds are distance-
+    transform peaks spaced ~ one typical plant radius apart; if `n_parts` is
+    given only the strongest n seeds are used. Returns [mask] if no split."""
+    area = int(inst_mask.sum())
+    if area < 2 * min_px:
+        return [inst_mask]
+    radius = max(3.0, np.sqrt(max(typical_area, 1.0) / np.pi))
+    seeds = auto_seeds(inst_mask, min_dist=radius)
+    if n_parts is not None:
+        seeds = seeds[:max(2, n_parts)]
+    else:
+        # never produce more parts than the area plausibly holds
+        max_parts = max(2, int(round(area / max(typical_area, 1.0))))
+        seeds = seeds[:max_parts]
+    if len(seeds) < 2:
+        return [inst_mask]
+    return split_by_points(inst_mask, seeds, min_px=min_px)

@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 
+APP_VERSION = "1.1.1"   # bumped with every UI/server change; the UI checks it
 APP_DIR = Path(__file__).resolve().parent.parent
 SETTINGS_PATH = APP_DIR / "settings.json"
 
@@ -27,6 +28,10 @@ DEFAULTS = {
     # ---- summary statistics
     "gsd_mm_per_px": None,      # ground sampling distance of the INPUT images
                                 # (mm per pixel). Needed for plants per m^2.
+    # ---- auto-label post-processing
+    "auto_split_factor": 2.5,   # after auto-label, instances larger than
+                                # factor x median plant area are split
+                                # automatically (0 = off)
     # semantic classes (fixed): 0=unlabeled, 1=soil, 2=crop, 3=weed
     "classes": [
         {"id": 1, "name": "soil",  "color": "#8a6a4b"},

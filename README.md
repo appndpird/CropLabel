@@ -83,6 +83,7 @@ opencv, fastapi). The SAM3.1 checkpoint lives in `models/sam3.1_multiplex.pt`.
 | Fix | ✂ split by line | 7 | drag a line across a merged plant → cut into separate instances along the line (start and end outside the plant) |
 | Fix | ✂• split by seeds | 8 | click one seed **inside each plant** of a merged instance, then Enter / double-click → watershed splits it into one instance per seed (follows the natural neck between plants) |
 | Fix | ✂▭ split by box | 9 | drag a box over the part that should be its own plant |
+| Fix | ✂A auto split | A | click an over-merged instance → split automatically at the plant crowns; Shift+click to say how many plants it holds. ✨ Auto-label already applies this to every instance larger than *Auto-split ×* the median plant area (Setup, default 2.5; 0 = off) |
 | Fix | ⛓ merge | 0 | click the first instance, then the second → one instance |
 | Fix | 🗑 delete | D | remove the clicked instance |
 | Fix | 🏷 reclassify | R | clicked instance → selected class (crop ↔ weed) |

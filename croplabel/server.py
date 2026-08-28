@@ -395,10 +395,39 @@ def run_autolabel(st: EditState) -> str:
     inst = sam_text_instances(st, settings.get("plant_prompts", ["plant"]),
                               threshold=float(settings["native_threshold"]))
     n = apply_instances(st, inst, None, "autolabel")
+    n_split = auto_split_large(st)
     # any vegetation SAM missed stays visible as 'unlabeled' for review
     clf.maybe_retrain(store(), images(), int(settings["work_res"]))
-    return (f"auto-label: {n} plant instances "
+    return (f"auto-label: {n} plant instances"
+            f"{f' (+{n_split} from auto-splitting over-merged ones)' if n_split else ''} "
             f"({'crop/weed classifier active' if clf.model is not None else 'all as crop — classifier not trained yet'})")
+
+
+def typical_plant_area(st: EditState) -> float:
+    areas = [m.get("area_px", 0) for m in st.meta.values()
+             if m["class"] == CLS_CROP and m.get("area_px")]
+    if not areas:
+        areas = [m.get("area_px", 0) for m in st.meta.values() if m.get("area_px")]
+    return float(np.median(areas)) if areas else 0.0
+
+
+def auto_split_large(st: EditState) -> int:
+    """Split instances much larger than the typical plant (SAM often joins
+    2-4 neighbouring seedlings). Returns number of NEW instances created."""
+    factor = float(settings.get("auto_split_factor", 2.5) or 0)
+    if factor <= 0 or len(st.meta) < 4:
+        return 0
+    typical = typical_plant_area(st)
+    if typical <= 0:
+        return 0
+    created = 0
+    for iid in [i for i, m in list(st.meta.items())
+                if m.get("area_px", 0) > factor * typical]:
+        parts = editing.split_auto(st.inst == iid, typical,
+                                   min_px=max(5, int(settings.get("min_instance_px", 30)) // 3))
+        if len(parts) > 1:
+            created += len(st.split_instance(iid, parts, "auto_split")) - 1
+    return created
 
 
 # ---------------------------------------------------------------------------
@@ -425,6 +454,7 @@ class ConfigIn(BaseModel):
     snap_polygon_to_veg: bool | None = None
     gsd_mm_per_px: float | None = None
     clear_gsd: bool | None = None
+    auto_split_factor: float | None = None
 
 
 @app.get("/api/config")
@@ -475,9 +505,15 @@ def queue():
     return {"groups": out, "total": sum(len(v["items"]) for v in out)}
 
 
+@app.get("/api/version")
+def version():
+    return {"version": config.APP_VERSION}
+
+
 @app.get("/api/model/status")
 def model_status():
-    return {"native_available": engine.available(),
+    return {"version": config.APP_VERSION,
+            "native_available": engine.available(),
             "native_loaded": engine.proc is not None,
             "native_error": engine.error,
             "classifier": clf.status(),
@@ -535,6 +571,7 @@ class ActIn(BaseModel):
     to_selected: bool = False        # brush adds to the selected instance
     snap: bool | None = None         # polygon: keep vegetation pixels only
     steal: bool = False              # brush/polygon may take pixels of others
+    n: int | None = None             # split_auto: number of plants expected
 
 
 _act_lock = threading.Lock()
@@ -694,11 +731,13 @@ def _act(body: ActIn):
                    f"instance to paint INTO it, or use polygon to create one)")
 
     # ------------------------------------------------------------- splits
-    elif a in ("split_line", "split_points", "split_box"):
+    elif a in ("split_line", "split_points", "split_box", "split_auto"):
         iid = st.selected if st.selected in st.meta else None
         if iid is None:
             # infer from the geometry: instance under the first point / box centre
-            if a == "split_box" and body.box:
+            if a == "split_auto":
+                iid = st.instance_at(body.x, body.y) or None
+            elif a == "split_box" and body.box:
                 cx, cy = (body.box[0] + body.box[2]) / 2, (body.box[1] + body.box[3]) / 2
                 iid = st.instance_at(cx, cy) or None
             else:
@@ -718,13 +757,18 @@ def _act(body: ActIn):
         elif a == "split_points":
             parts = editing.split_by_points(whole, body.points or [],
                                             min_px=max(5, min_px // 3))
-        else:
+        elif a == "split_box":
             parts = editing.split_by_box(whole, body.box or [0, 0, 0, 0],
                                          min_px=max(5, min_px // 3))
+        else:
+            typical = typical_plant_area(st) or float(whole.sum()) / 2
+            parts = editing.split_auto(whole, typical, min_px=max(5, min_px // 3),
+                                       n_parts=body.n if body.n and body.n > 1 else None)
         if len(parts) < 2:
             hint = {"split_line": "the line must cross the plant completely",
                     "split_points": "click one seed INSIDE each plant (2+)",
-                    "split_box": "the box must cover part of the plant, not all"}[a]
+                    "split_box": "the box must cover part of the plant, not all",
+                    "split_auto": "no separate crowns found — use ✂• seeds instead"}[a]
             return _response(st, f"nothing to split — {hint}")
         st.push_undo()
         ids = st.split_instance(iid, parts, source=a)
