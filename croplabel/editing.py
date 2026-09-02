@@ -161,9 +161,13 @@ def instance_stats(mask: np.ndarray) -> dict:
             "centroid": [float(xs.mean()), float(ys.mean())]}
 
 
-def auto_seeds(inst_mask: np.ndarray, min_dist: float) -> list:
+def auto_seeds(inst_mask: np.ndarray, min_dist: float,
+               min_rel: float = 0.0) -> list:
     """Seed points for automatic splitting: local maxima of the distance
-    transform that are at least `min_dist` apart (one per plant crown)."""
+    transform that are at least `min_dist` apart (one per plant crown).
+    `min_rel` drops weak maxima (< min_rel x the strongest one): a plant
+    crown is wider than its leaves, so this keeps the crowns of two merged
+    seedlings but ignores the thin leaves of a single big plant."""
     dist = cv2.distanceTransform(inst_mask.astype(np.uint8), cv2.DIST_L2, 5)
     k = max(3, int(min_dist) | 1)
     peaks = (dist == cv2.dilate(dist, np.ones((k, k), np.uint8))) & (dist > 1.0)
@@ -171,6 +175,8 @@ def auto_seeds(inst_mask: np.ndarray, min_dist: float) -> list:
     cand = sorted([(float(dist[int(cents[i][1]), int(cents[i][0])]),
                     int(cents[i][0]), int(cents[i][1])) for i in range(1, n)],
                   reverse=True)
+    if cand and min_rel > 0:
+        cand = [c for c in cand if c[0] >= min_rel * cand[0][0]]
     seeds = []
     for d, x, y in cand:
         if all((x - sx) ** 2 + (y - sy) ** 2 >= min_dist ** 2 for sx, sy in seeds):
@@ -179,7 +185,7 @@ def auto_seeds(inst_mask: np.ndarray, min_dist: float) -> list:
 
 
 def split_auto(inst_mask: np.ndarray, typical_area: float, min_px: int = 20,
-               n_parts: int | None = None) -> list:
+               n_parts: int | None = None, min_rel: float = 0.0) -> list:
     """Split an over-merged instance automatically. Seeds are distance-
     transform peaks spaced ~ one typical plant radius apart; if `n_parts` is
     given only the strongest n seeds are used. Returns [mask] if no split."""
@@ -187,7 +193,7 @@ def split_auto(inst_mask: np.ndarray, typical_area: float, min_px: int = 20,
     if area < 2 * min_px:
         return [inst_mask]
     radius = max(3.0, np.sqrt(max(typical_area, 1.0) / np.pi))
-    seeds = auto_seeds(inst_mask, min_dist=radius)
+    seeds = auto_seeds(inst_mask, min_dist=radius, min_rel=min_rel)
     if n_parts is not None:
         seeds = seeds[:max(2, n_parts)]
     else:

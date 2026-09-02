@@ -39,7 +39,7 @@
 </head>
 <body>
 
-<h1>🌱 CropLabel <small>Installation &amp; User Guide — SAM3.1-assisted crop / weed / soil labeling for plot images · v1.1 · August 2026</small></h1>
+<h1>🌱 CropLabel <small>Installation &amp; User Guide — SAM3.1-assisted crop / weed / soil labeling for plot images · v1.2 · September 2026</small></h1>
 
 <div class="toc">
 <b>Contents</b>
@@ -198,13 +198,25 @@ canvas when active.</p>
 <tr><td class="tool">✂</td><td>7</td><td><b>Split by line</b> — drag a line right across a merged plant (start and end outside it). The instance is cut along the line into separate instances; no gap is left.</td></tr>
 <tr><td class="tool">✂•</td><td>8</td><td><b>Split by seeds</b> — click once <b>inside each plant</b> of a merged instance (two or more seeds), then <kbd>Enter</kbd> or double-click. A watershed on the shape's distance transform splits it into one instance per seed, following the natural "neck" between the plants. Fastest way to separate 3–4 seedlings that SAM joined.</td></tr>
 <tr><td class="tool">✂▭</td><td>9</td><td><b>Split by box</b> — drag a box over the part of an instance that should be its own plant.</td></tr>
+<tr><td class="tool">✂A</td><td>A</td><td><b>Auto split</b> — click an over-merged instance: it is split automatically at the plant crowns (the wide points of the shape). <kbd>Shift</kbd>+click asks how many plants it holds and forces exactly that many parts. ✨ Auto-label already applies this to every instance larger than <b>Auto-split ×</b> the typical single-plant area (Setup, default 1.7).</td></tr>
 <tr><td class="tool">⛓</td><td>0</td><td><b>Merge</b> — click the first instance, then the second: they become one instance (fixes one plant split into several).</td></tr>
 <tr><td class="tool">🗑</td><td>D</td><td><b>Delete</b> — removes the instance under the click (pixels return to soil/unlabeled).</td></tr>
 <tr><td class="tool">🏷</td><td>R</td><td><b>Reclassify</b> — the clicked instance becomes the selected class (crop ↔ weed).</td></tr>
 </table>
-<p>After a split the largest part keeps the original instance number and the
-others receive new numbers; bounding boxes and areas are recomputed after
-every edit, so the saved files always contain exactly what you see.</p>
+<p><b>Instance numbers are always sequential (1 … N in the order the plants
+were created).</b> When instance 13 is split into three, the parts become 13,
+14 and 15 and every later instance moves up by two; a delete or merge closes
+the gap. The numbers drawn on the image, the ids in <code>_instances.png</code>
+and the JSON are always the same, so the files never have gaps. Bounding boxes
+and areas are recomputed after every edit.</p>
+<div class="tip"><b>Version 1.2 — fewer merged seedlings.</b> When SAM3.1 returns
+both a group of touching seedlings and the single plants inside it, the single
+plants are now preferred (the old rule kept whichever scored higher, usually
+the group). The automatic split then fires at 1.7 × the typical single-plant
+area instead of 2.5 × — two merged 2-leaf seedlings are ~1.7–2.3 ×, a single
+3-leaf plant ~1.3–1.6 ×. On the 40 OzBarley sample tiles this cut the number
+of over-merged instances from 304 to 99. If a large 3–4-leaf plant is
+occasionally cut at a leaf, ⛓ merge fixes it with two clicks.</div>
 <h3>6c. View options and navigation</h3>
 <table>
 <tr><th style="width:40mm">Option / control</th><th>Effect</th></tr>
@@ -304,9 +316,10 @@ and the averages/totals over the whole dataset.</p>
 <table>
 <tr><th>Setting</th><th>Default</th><th>Meaning</th></tr>
 <tr><td>Plant prompts</td><td>plant, seedling</td><td>SAM3.1 text prompts used by ✨ auto-label and the batch. Comma-separated; results are merged and de-duplicated.</td></tr>
-<tr><td>Threshold</td><td>0.4</td><td>SAM3.1 confidence cut-off. Lower finds more (and more false) plants.</td></tr>
+<tr><td>Threshold</td><td>0.35</td><td>SAM3.1 confidence cut-off. Lower finds more (and more false) plants. 0.35 gives more single-plant detections for small seedlings.</td></tr>
 <tr><td>ExG</td><td>0.06</td><td>Excess-Green vegetation threshold. Lower catches paler/yellowish plants as vegetation; higher pushes more into soil. Also clips every SAM instance so masks never bleed into soil.</td></tr>
 <tr><td>Min px</td><td>30</td><td>Instances smaller than this many pixels (at working resolution) are dropped as noise.</td></tr>
+<tr><td>Auto-split ×</td><td>1.7</td><td>After ✨ auto-label, instances larger than this × the typical single-plant area are split automatically at the plant crowns. 0 = off. For 2-leaf seedlings keep 1.7; if most plants have 4+ leaves and you see single plants being cut, raise to 2.0–2.5.</td></tr>
 <tr><td>GSD (mm / pixel)</td><td>empty</td><td>Ground sampling distance of the input images. Enables plants / m², weeds / m², crop cover m² and plant area cm² in the statistics. For a tile cut from an orthomosaic use the orthomosaic's resolution (e.g. 5 mm/px → 5).</td></tr>
 <tr><td>Instance numbers / Bounding boxes / Save bbox files / Side by side / Snap polygon</td><td>off / off / off / off / on</td><td>The option-bar checkboxes; remembered between sessions (settings.json).</td></tr>
 <tr><td>work_res</td><td>1024</td><td>Internal working resolution (settings.json). Labels are always saved at the original image size.</td></tr>
@@ -330,7 +343,7 @@ and the averages/totals over the whole dataset.</p>
 </table>
 
 <footer>CropLabel · DPIRD — repository: github.com/appndpird/CropLabel ·
-This guide corresponds to the August 2026 build (v1.1 — manual review tools, bbox export, summary statistics).</footer>
+This guide corresponds to the September 2026 build (v1.2 — finer plant separation, sequential instance numbers, manual review tools, bbox export, summary statistics).</footer>
 
 </body>
 </html>

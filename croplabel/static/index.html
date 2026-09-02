@@ -725,7 +725,7 @@ async function loadCfg(){
   $("#inThresh").value = c.native_threshold; $("#inExg").value = c.exg_thresh;
   $("#inMinPx").value = c.min_instance_px;
   $("#inGsd").value = c.gsd_mm_per_px ?? "";
-  $("#inAutoSplit").value = c.auto_split_factor ?? 2.5;
+  $("#inAutoSplit").value = c.auto_split_factor ?? 1.7;
   for (const [id, key] of Object.entries(OPTS)) $("#" + id).checked = !!c[key];
   S.sbs = !!c.side_by_side;
   const sel = $("#selCrop"); sel.innerHTML = "";
@@ -750,7 +750,7 @@ document.querySelectorAll(".browse").forEach(b => b.onclick = async () => {
   if (r.path){ $("#" + b.dataset.for).value = r.path; $("#btnSaveCfg").click(); }
 });
 
-const UI_VERSION = "1.1.1";   // must match croplabel/config.py APP_VERSION
+const UI_VERSION = "1.2.0";   // must match croplabel/config.py APP_VERSION
 async function pollModel(){
   const s = await api("/api/model/status");
   if (s.version !== UI_VERSION){

@@ -83,16 +83,17 @@ opencv, fastapi). The SAM3.1 checkpoint lives in `models/sam3.1_multiplex.pt`.
 | Fix | ✂ split by line | 7 | drag a line across a merged plant → cut into separate instances along the line (start and end outside the plant) |
 | Fix | ✂• split by seeds | 8 | click one seed **inside each plant** of a merged instance, then Enter / double-click → watershed splits it into one instance per seed (follows the natural neck between plants) |
 | Fix | ✂▭ split by box | 9 | drag a box over the part that should be its own plant |
-| Fix | ✂A auto split | A | click an over-merged instance → split automatically at the plant crowns; Shift+click to say how many plants it holds. ✨ Auto-label already applies this to every instance larger than *Auto-split ×* the median plant area (Setup, default 2.5; 0 = off) |
+| Fix | ✂A auto split | A | click an over-merged instance → split automatically at the plant crowns; Shift+click to say how many plants it holds. ✨ Auto-label already applies this to every instance larger than *Auto-split ×* the typical single-plant area (Setup, default 1.7; 0 = off) |
 | Fix | ⛓ merge | 0 | click the first instance, then the second → one instance |
 | Fix | 🗑 delete | D | remove the clicked instance |
 | Fix | 🏷 reclassify | R | clicked instance → selected class (crop ↔ weed) |
 | View | ✋ hand | H | left-drag moves the image (right-drag, middle-drag or Space+drag move it with **any** tool); `−` / `+` / `⤢ Fit` / `1:1` buttons, arrow keys nudge, `F` fits, wheel zooms at the cursor |
 | keys | | | `c` crop, `w` weed, `Ctrl+Z/Y` undo/redo, `Ctrl+S` save, `Esc` cancel / deselect |
 
-Every action is undoable (25 steps). Splits keep the original id on the
-largest part and give new ids to the others; the label files always contain
-exactly the instances you see.
+Every action is undoable (25 steps). Instance numbers are always sequential:
+splitting instance 13 into three gives 13, 14, 15 and shifts the later ones;
+delete/merge close the gap. The label files always contain exactly the
+instances you see, with the same numbers.
 
 ## Dataset
 

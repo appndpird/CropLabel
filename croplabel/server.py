@@ -228,7 +228,33 @@ class EditState:
         leftover = whole & (self.inst == 0)
         if leftover.any():
             self.sem[leftover] = np.where(self.veg[leftover], CLS_UNLABELED, CLS_SOIL)
-        return ids
+        # number the parts iid, iid+1, ... and shift everything after them
+        rest = [i for i in sorted(self.meta) if i not in ids]
+        pos = sum(1 for i in rest if i < iid)
+        order = rest[:pos] + ids + rest[pos:]
+        self.renumber(order)
+        return list(range(order.index(iid) + 1, order.index(iid) + 1 + len(ids)))
+
+    def renumber(self, order: list) -> None:
+        """Relabel the instances to 1..N in the given order (current ids).
+        Keeps ids sequential after splits / merges / deletes so the numbers
+        drawn on the image and written to the files never have gaps."""
+        mapping = {old: i + 1 for i, old in enumerate(order)}
+        if len(mapping) != len(self.meta) or all(k == v for k, v in mapping.items()):
+            if len(mapping) == len(self.meta):
+                self.next_id = len(order) + 1
+                return
+        lut = np.zeros(max(int(self.next_id), int(self.inst.max()) + 1), np.uint16)
+        for k, v in mapping.items():
+            lut[k] = v
+        self.inst = lut[self.inst]
+        self.meta = {mapping[k]: dict(v, id=mapping[k]) for k, v in self.meta.items()}
+        self.selected = mapping.get(self.selected) if self.selected is not None else None
+        self.next_id = len(order) + 1
+
+    def compact(self) -> None:
+        """Close the gaps left by delete / merge / erase (keeps the order)."""
+        self.renumber(sorted(self.meta))
 
     def merge_instances(self, keep: int, other: int):
         if keep not in self.meta or other not in self.meta or keep == other:
@@ -333,17 +359,61 @@ def state_of(key: str, fresh: bool = False) -> EditState:
 # ---------------------------------------------------------------------------
 # SAM helpers
 # ---------------------------------------------------------------------------
-def _dedupe(instances: list) -> list:
-    """Drop instances whose mask mostly overlaps a higher-scoring one."""
-    inst = sorted(instances, key=lambda r: -r["score"])
-    kept, used = [], np.zeros(inst[0]["mask"].shape, bool) if inst else None
+def _dedupe(instances: list, cover: float = 0.6, min_px: int = 30) -> list:
+    """Resolve overlapping SAM detections, preferring the FINER partition.
+
+    SAM3 often returns both a cluster mask (2-4 neighbouring seedlings) and
+    the individual plants inside it. Scanning smallest-first:
+      * a detection covered (> `cover`) by >= 2 already-kept smaller ones is
+        a cluster of plants we already have -> only its uncovered remainder
+        is kept (a third plant SAM did not detect on its own);
+      * kept detections lying mostly inside the current one when it is NOT a
+        cluster (a single leaf of the plant) are dropped in favour of the
+        whole plant;
+      * near-duplicates keep the larger mask.
+    Bounding boxes prune the pairwise tests so this stays fast."""
+    def _box(r):
+        b = r.get("box")
+        if b is None or len(b) != 4:
+            ys, xs = np.nonzero(r["mask"])
+            b = [xs.min(), ys.min(), xs.max() + 1, ys.max() + 1] if len(xs) else [0, 0, 0, 0]
+        return [float(v) for v in b]
+
+    def _touch(a, b):
+        return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
+
+    inst = [dict(r, _area=int(r["mask"].sum()), _box=_box(r)) for r in instances]
+    inst = [r for r in inst if r["_area"] > 0]
+    inst.sort(key=lambda r: r["_area"])
+    kept: list = []
     for r in inst:
-        inter = (r["mask"] & used).sum()
-        if inter / max(1, r["mask"].sum()) > 0.6:
+        m, a = r["mask"], r["_area"]
+        inside = []            # (kept, overlap px) for kept masks touching r
+        for k in kept:
+            if not _touch(k["_box"], r["_box"]):
+                continue
+            ov = int((k["mask"] & m).sum())
+            if ov:
+                inside.append((k, ov))
+        parts = [(k, ov) for k, ov in inside if ov > cover * k["_area"]]
+        covered = sum(ov for _, ov in parts) / max(1, a)
+        if len(parts) >= 2 and covered > cover:
+            # r is a cluster of plants we already have: keep only what is left
+            rest = m.copy()
+            for k, _ in parts:
+                rest &= ~k["mask"]
+            if rest.sum() >= max(min_px, 0.15 * a):
+                ys, xs = np.nonzero(rest)
+                kept.append(dict(r, mask=rest, _area=int(rest.sum()),
+                                 _box=[float(xs.min()), float(ys.min()),
+                                       float(xs.max() + 1), float(ys.max() + 1)]))
             continue
+        # not a cluster: fragments / near-duplicates inside r give way to r
+        drop = {id(k) for k, _ in parts}
+        kept = [k for k in kept if id(k) not in drop]
         kept.append(r)
-        used |= r["mask"]
-    return kept
+    kept.sort(key=lambda r: -r["score"])
+    return [{k: v for k, v in r.items() if not k.startswith("_")} for r in kept]
 
 
 def sam_text_instances(st: EditState, prompts, threshold=None) -> list:
@@ -352,13 +422,13 @@ def sam_text_instances(st: EditState, prompts, threshold=None) -> list:
     if res is None:
         return []
     flat = [r for p in prompts for r in res.get(p, [])]
-    return _dedupe(flat) if flat else []
+    return _dedupe(flat, min_px=int(settings.get("min_instance_px", 30))) if flat else []
 
 
 def sam_exemplar_instances(st: EditState, threshold=None) -> list:
     res = engine.exemplar_instances(st.img, st.pos_boxes, st.neg_boxes,
                                     threshold=threshold)
-    return _dedupe(res) if res else []
+    return _dedupe(res, min_px=int(settings.get("min_instance_px", 30))) if res else []
 
 
 def lesion_box_at(st: EditState, x: float, y: float):
@@ -396,6 +466,7 @@ def run_autolabel(st: EditState) -> str:
                               threshold=float(settings["native_threshold"]))
     n = apply_instances(st, inst, None, "autolabel")
     n_split = auto_split_large(st)
+    st.compact()
     # any vegetation SAM missed stays visible as 'unlabeled' for review
     clf.maybe_retrain(store(), images(), int(settings["work_res"]))
     return (f"auto-label: {n} plant instances"
@@ -404,17 +475,36 @@ def run_autolabel(st: EditState) -> str:
 
 
 def typical_plant_area(st: EditState) -> float:
+    """Robust single-plant area. The plain median is pulled up by merged
+    clusters and down by leaf fragments, so take the median of the
+    instances within 0.5-1.5x of the raw median (the single-plant band)."""
     areas = [m.get("area_px", 0) for m in st.meta.values()
              if m["class"] == CLS_CROP and m.get("area_px")]
     if not areas:
         areas = [m.get("area_px", 0) for m in st.meta.values() if m.get("area_px")]
-    return float(np.median(areas)) if areas else 0.0
+    return robust_typical_area(areas)
+
+
+def robust_typical_area(areas) -> float:
+    if not areas:
+        return 0.0
+    med = float(np.median(areas))
+    core = [a for a in areas if 0.5 * med <= a <= 1.5 * med]
+    return float(np.median(core)) if len(core) >= 3 else med
+
+
+# Crown-strength filter for automatic split seeds: distance-transform peaks
+# weaker than this fraction of the strongest peak are ignored (thin leaves of
+# a single plant). Tuned on the 40 OzBarley sample tiles (2026-09-02): 0.35
+# keeps ~all two-plant splits of the unfiltered version with ~12% fewer
+# fragments; 0.5 starts missing dense clusters.
+AUTO_SPLIT_MIN_REL = 0.35
 
 
 def auto_split_large(st: EditState) -> int:
     """Split instances much larger than the typical plant (SAM often joins
     2-4 neighbouring seedlings). Returns number of NEW instances created."""
-    factor = float(settings.get("auto_split_factor", 2.5) or 0)
+    factor = float(settings.get("auto_split_factor", 1.7) or 0)
     if factor <= 0 or len(st.meta) < 4:
         return 0
     typical = typical_plant_area(st)
@@ -424,7 +514,8 @@ def auto_split_large(st: EditState) -> int:
     for iid in [i for i, m in list(st.meta.items())
                 if m.get("area_px", 0) > factor * typical]:
         parts = editing.split_auto(st.inst == iid, typical,
-                                   min_px=max(5, int(settings.get("min_instance_px", 30)) // 3))
+                                   min_px=max(5, int(settings.get("min_instance_px", 30)) // 3),
+                                   min_rel=AUTO_SPLIT_MIN_REL)
         if len(parts) > 1:
             created += len(st.split_instance(iid, parts, "auto_split")) - 1
     return created
@@ -763,7 +854,8 @@ def _act(body: ActIn):
         else:
             typical = typical_plant_area(st) or float(whole.sum()) / 2
             parts = editing.split_auto(whole, typical, min_px=max(5, min_px // 3),
-                                       n_parts=body.n if body.n and body.n > 1 else None)
+                                       n_parts=body.n if body.n and body.n > 1 else None,
+                                       min_rel=0.0 if body.n else AUTO_SPLIT_MIN_REL)
         if len(parts) < 2:
             hint = {"split_line": "the line must cross the plant completely",
                     "split_points": "click one seed INSIDE each plant (2+)",
@@ -773,7 +865,8 @@ def _act(body: ActIn):
         st.push_undo()
         ids = st.split_instance(iid, parts, source=a)
         st.selected = None
-        msg = f"✂ instance {iid} split into {len(ids)}: {ids}"
+        msg = (f"✂ instance {iid} split into {len(ids)}: {ids} "
+               f"(instances after it renumbered)")
 
     # --------------------------------------------------------------- merge
     elif a == "merge":
@@ -830,6 +923,7 @@ def _act(body: ActIn):
     else:
         return JSONResponse({"error": f"unknown action {a}"}, 400)
 
+    st.compact()
     st.dirty = True
     return _response(st, msg)
 
@@ -845,6 +939,7 @@ def save(body: SaveIn):
     st = state_of(body.key)
     if body.crop_type:
         st.crop_type = body.crop_type
+    st.compact()
     rec = store().save(st.key, st.img_path, st.sem, st.inst,
                        st.instances_meta(), st.crop_type,
                        "sam3.1+human", status=body.status,

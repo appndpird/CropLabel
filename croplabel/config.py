@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-APP_VERSION = "1.1.1"   # bumped with every UI/server change; the UI checks it
+APP_VERSION = "1.2.0"   # bumped with every UI/server change; the UI checks it
 APP_DIR = Path(__file__).resolve().parent.parent
 SETTINGS_PATH = APP_DIR / "settings.json"
 
@@ -12,7 +12,7 @@ DEFAULTS = {
     "work_res": 1024,           # SAM3 working resolution (labels are always
                                 # saved at the ORIGINAL image size)
     "sam3_ckpt": str(APP_DIR / "models" / "sam3.1_multiplex.pt"),
-    "native_threshold": 0.4,    # SAM3.1 concept confidence threshold
+    "native_threshold": 0.35,   # SAM3.1 concept confidence threshold
     "plant_prompts": ["plant", "seedling"],  # auto-label text prompts
     "exg_thresh": 0.06,         # ExG vegetation threshold (soil = below)
     "min_instance_px": 30,      # drop instances smaller than this (@work_res)
@@ -29,9 +29,11 @@ DEFAULTS = {
     "gsd_mm_per_px": None,      # ground sampling distance of the INPUT images
                                 # (mm per pixel). Needed for plants per m^2.
     # ---- auto-label post-processing
-    "auto_split_factor": 2.5,   # after auto-label, instances larger than
-                                # factor x median plant area are split
-                                # automatically (0 = off)
+    "auto_split_factor": 1.7,   # after auto-label, instances larger than
+                                # factor x the typical single-plant area are
+                                # split automatically (0 = off). 1.7 catches
+                                # two merged 2-leaf seedlings; a single 3-leaf
+                                # plant is ~1.3-1.6x.
     # semantic classes (fixed): 0=unlabeled, 1=soil, 2=crop, 3=weed
     "classes": [
         {"id": 1, "name": "soil",  "color": "#8a6a4b"},
