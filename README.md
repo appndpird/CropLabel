@@ -83,11 +83,12 @@ opencv, fastapi). The SAM3.1 checkpoint lives in `models/sam3.1_multiplex.pt`.
 | Fix | ✂ split by line | 7 | drag a line across a merged plant → cut into separate instances along the line (start and end outside the plant) |
 | Fix | ✂• split by seeds | 8 | click one seed **inside each plant** of a merged instance, then Enter / double-click → watershed splits it into one instance per seed (follows the natural neck between plants) |
 | Fix | ✂▭ split by box | 9 | drag a box over the part that should be its own plant |
+| Fix | ✂⬠ split by polygon | P | click the corners around **one** plant of a merged instance (like the polygon tool), Enter / double-click / first corner to close → that part becomes its own instance, the rest keeps its number |
 | Fix | ✂A auto split | A | click an over-merged instance → split automatically at the plant crowns; Shift+click to say how many plants it holds. ✨ Auto-label already applies this to every instance larger than *Auto-split ×* the typical single-plant area (Setup, default 1.7; 0 = off) |
 | Fix | ⛓ merge | 0 | click the first instance, then the second → one instance |
 | Fix | 🗑 delete | D | remove the clicked instance |
 | Fix | 🏷 reclassify | R | clicked instance → selected class (crop ↔ weed) |
-| View | ✋ hand | H | left-drag moves the image (right-drag, middle-drag or Space+drag move it with **any** tool); `−` / `+` / `⤢ Fit` / `1:1` buttons, arrow keys nudge, `F` fits, wheel zooms at the cursor |
+| View | ✋ hand | H | left-drag moves the image (right-drag, middle-drag or Space+drag move it with **any** tool); `−` / `+` / `⤢ Fit` / `1:1` buttons, arrow keys nudge, `F` fits, wheel zooms at the cursor. In *Side by side* mode each panel zooms and moves on its own (wheel / drag inside it); tick **🔗 Link views** to lock them together |
 | keys | | | `c` crop, `w` weed, `Ctrl+Z/Y` undo/redo, `Ctrl+S` save, `Esc` cancel / deselect |
 
 Every action is undoable (25 steps). Instance numbers are always sequential:

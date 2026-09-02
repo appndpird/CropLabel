@@ -39,7 +39,7 @@
 </head>
 <body>
 
-<h1>🌱 CropLabel <small>Installation &amp; User Guide — SAM3.1-assisted crop / weed / soil labeling for plot images · v1.2 · September 2026</small></h1>
+<h1>🌱 CropLabel <small>Installation &amp; User Guide — SAM3.1-assisted crop / weed / soil labeling for plot images · v1.3 · September 2026</small></h1>
 
 <div class="toc">
 <b>Contents</b>
@@ -198,6 +198,7 @@ canvas when active.</p>
 <tr><td class="tool">✂</td><td>7</td><td><b>Split by line</b> — drag a line right across a merged plant (start and end outside it). The instance is cut along the line into separate instances; no gap is left.</td></tr>
 <tr><td class="tool">✂•</td><td>8</td><td><b>Split by seeds</b> — click once <b>inside each plant</b> of a merged instance (two or more seeds), then <kbd>Enter</kbd> or double-click. A watershed on the shape's distance transform splits it into one instance per seed, following the natural "neck" between the plants. Fastest way to separate 3–4 seedlings that SAM joined.</td></tr>
 <tr><td class="tool">✂▭</td><td>9</td><td><b>Split by box</b> — drag a box over the part of an instance that should be its own plant.</td></tr>
+<tr><td class="tool">✂⬠</td><td>P</td><td><b>Split by polygon</b> — when several plants were labeled as one instance, click the corners around <b>one</b> of them exactly like the ⬠ polygon tool, then <kbd>Enter</kbd>, double-click or click the first corner. The part inside the polygon becomes its own instance; the rest keeps its number. Only pixels of that instance are affected, so the polygon can be rough.</td></tr>
 <tr><td class="tool">✂A</td><td>A</td><td><b>Auto split</b> — click an over-merged instance: it is split automatically at the plant crowns (the wide points of the shape). <kbd>Shift</kbd>+click asks how many plants it holds and forces exactly that many parts. ✨ Auto-label already applies this to every instance larger than <b>Auto-split ×</b> the typical single-plant area (Setup, default 1.7).</td></tr>
 <tr><td class="tool">⛓</td><td>0</td><td><b>Merge</b> — click the first instance, then the second: they become one instance (fixes one plant split into several).</td></tr>
 <tr><td class="tool">🗑</td><td>D</td><td><b>Delete</b> — removes the instance under the click (pixels return to soil/unlabeled).</td></tr>
@@ -223,7 +224,8 @@ occasionally cut at a leaf, ⛓ merge fixes it with two clicks.</div>
 <tr><td><b>Instance numbers</b></td><td>Draws each instance's id on top of the plant (also in the saved <code>_overlay.png</code>).</td></tr>
 <tr><td><b>Bounding boxes</b></td><td>Draws a class-coloured bounding box around every instance (also in the saved overlay).</td></tr>
 <tr><td><b>Save bbox files</b></td><td>On Save also writes <code>&lt;name&gt;_boxes.json</code>, <code>&lt;name&gt;_boxes.txt</code> (YOLO) and <code>&lt;name&gt;_boxes.png</code> — see section 10.</td></tr>
-<tr><td><b>Side by side</b></td><td>Shows the original image on the left and the annotated image on the right; both zoom and pan together. Tools act on the right panel.</td></tr>
+<tr><td><b>Side by side</b></td><td>Shows the original image on the left and the annotated image on the right. <b>Each panel moves and zooms on its own</b>: the wheel zooms the panel under the cursor, dragging inside the left panel moves the original (any button), the hand / right-drag / Space-drag move the annotated panel. So you can zoom into one plant on the right and inspect the raw pixels of any other area on the left at the same time. Tools act on the right panel only.</td></tr>
+<tr><td><b>🔗 Link views</b></td><td>Locks the two panels to the same zoom and position (moving one moves the other) — handy to compare exactly the same spot. Untick to move them independently again.</td></tr>
 <tr><td><b>Snap polygon to vegetation</b></td><td>Polygon tool keeps only vegetation pixels inside the drawn polygon.</td></tr>
 <tr><td>✋ hand (<kbd>H</kbd>), −/+, ⤢ Fit, 1:1</td><td>Left-drag moves the image with the hand tool; right-drag, middle-drag or <kbd>Space</kbd>+drag move it with any tool. Mouse wheel zooms at the cursor, arrow keys nudge, <kbd>F</kbd> fits the image to the window.</td></tr>
 <tr><td><b>Overlay</b> slider</td><td>Fades the label view to check the underlying image.</td></tr>
@@ -343,7 +345,7 @@ and the averages/totals over the whole dataset.</p>
 </table>
 
 <footer>CropLabel · DPIRD — repository: github.com/appndpird/CropLabel ·
-This guide corresponds to the September 2026 build (v1.2 — finer plant separation, sequential instance numbers, manual review tools, bbox export, summary statistics).</footer>
+This guide corresponds to the September 2026 build (v1.3 — split by polygon, independent side-by-side panels, finer plant separation, sequential instance numbers, manual review tools, bbox export, summary statistics).</footer>
 
 </body>
 </html>

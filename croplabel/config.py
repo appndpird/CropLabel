@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-APP_VERSION = "1.2.0"   # bumped with every UI/server change; the UI checks it
+APP_VERSION = "1.3.0"   # bumped with every UI/server change; the UI checks it
 APP_DIR = Path(__file__).resolve().parent.parent
 SETTINGS_PATH = APP_DIR / "settings.json"
 

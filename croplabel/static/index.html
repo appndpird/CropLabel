@@ -181,6 +181,7 @@
         <button class="tool" data-tool="splitline" title="SPLIT BY LINE: drag a line across a merged plant — it is cut into separate instances along the line">✂<span class="k">7</span></button>
         <button class="tool" data-tool="splitpoints" title="SPLIT BY SEEDS: click once inside EACH plant of a merged instance, then Enter (or double-click) — watershed splits it into one instance per seed">✂•<span class="k">8</span></button>
         <button class="tool" data-tool="splitbox" title="SPLIT BY BOX: drag a box over the part of an instance that should become its own plant">✂▭<span class="k">9</span></button>
+        <button class="tool" data-tool="splitpoly" title="SPLIT BY POLYGON: click the corners around ONE plant of a merged instance (like the ⬠ polygon tool), then Enter / double-click / click the first corner — that part becomes its own instance, the rest keeps its number">✂⬠<span class="k">P</span></button>
         <button class="tool" data-tool="splitauto" title="AUTO SPLIT: click an over-merged instance — it is split automatically at the plant crowns (distance-transform peaks). Shift+click asks how many plants.">✂A<span class="k">A</span></button>
         <button class="tool" data-tool="merge" title="MERGE: click the first instance, then the second → one instance">⛓<span class="k">0</span></button>
         <button class="tool" data-tool="delete" title="Delete the instance under the click">🗑<span class="k">D</span></button>
@@ -214,7 +215,8 @@
       <label class="chk" title="Draw the instance number on top of every plant"><input type="checkbox" id="optIds"> Instance numbers</label>
       <label class="chk" title="Draw a bounding box around every instance"><input type="checkbox" id="optBoxes"> Bounding boxes</label>
       <label class="chk" title="On Save also write &lt;name&gt;_boxes.json + &lt;name&gt;_boxes.txt (YOLO) + &lt;name&gt;_boxes.png"><input type="checkbox" id="optSaveBoxes"> Save bbox files</label>
-      <label class="chk" title="Show the original image next to the annotated one"><input type="checkbox" id="optSbs"> Side by side</label>
+      <label class="chk" title="Show the original image next to the annotated one. Each panel moves and zooms on its own (wheel / drag inside it)."><input type="checkbox" id="optSbs"> Side by side</label>
+      <label class="chk" id="lblLink" title="Lock both panels to the same view: moving or zooming one moves the other"><input type="checkbox" id="optLink"> 🔗 Link views</label>
       <label class="chk" title="Polygon keeps only vegetation (green) pixels — accurate plant outlines from a rough polygon"><input type="checkbox" id="optSnap"> Snap polygon to vegetation</label>
       <span class="tgroup"><label class="small">Brush</label>
         <input type="range" id="brushSize" min="1" max="60" value="8" style="width:80px"><span id="brushVal" style="width:22px">8</span></span>
@@ -222,7 +224,7 @@
         <input type="range" id="opacity" min="0" max="100" value="100" style="width:80px"></span>
       <button id="btnResetEx" title="Forget the ⭐ example boxes on this image" style="padding:3px 8px">⭐✖</button>
       <span style="flex:1"></span>
-      <span style="color:var(--dim)">wheel zoom · ✋ / right-drag / Space-drag / arrows move · F fit · Alt+click select · Del delete selected · Esc cancel</span>
+      <span style="color:var(--dim)">wheel zoom · ✋ / right-drag / Space-drag / arrows move · F fit · Alt+click select · Del delete selected · Esc cancel · side by side: each panel zooms/moves on its own</span>
     </div>
     <div id="agentRow">
       <span style="color:var(--dim);font-size:12px" title="Tell the labeler what to find — free text runs as a SAM3 concept prompt for the selected class. E.g. 'broad leaf plant' with Weed selected.">🤖 Find:</span>
@@ -257,7 +259,9 @@ const api = async (url, body) => {
 let IW = 1024, IH = 1024;
 const GAP = 16;   // px between the two panels in side-by-side mode
 const S = { key:null, img:null, overlay:null, tool:"exemplar", cls:2,
-            zoom:1, ox:0, oy:0, panning:false, spaceDown:false,
+            view:{zoom:1, ox:0, oy:0},      // annotated panel (tools act here)
+            viewO:{zoom:1, ox:0, oy:0},     // original panel (side-by-side)
+            linked:false, panView:null, panning:false, spaceDown:false,
             drawing:false, stroke:[], boxStart:null, boxCur:null, dirty:false,
             poly:[], seeds:[], hover:null, selected:null, sbs:false,
             cfg:{} };
@@ -278,6 +282,7 @@ const HINTS = {
   splitline:"✂ Drag a line right across the merged plant (start and end OUTSIDE it). Each side becomes its own instance.",
   splitpoints:"✂• Click one seed INSIDE each plant of the merged instance (2+), then Enter or double-click. Esc cancels.",
   splitbox:"✂▭ Drag a box around the part that should be a separate plant.",
+  splitpoly:"✂⬠ Click the corners around ONE plant of the merged instance. Enter / double-click / first corner = split it off. Backspace = undo corner, Esc = cancel.",
   splitauto:"✂A Click an over-merged instance → split automatically at the plant crowns. Shift+click to tell it how many plants it contains.",
   merge:"⛓ Click the first instance, then the one to merge into it.",
   delete:"🗑 Click an instance to delete it.",
@@ -288,13 +293,24 @@ function loadImg(b64){ return new Promise(res => {
   const im = new Image(); im.onload = () => res(im);
   im.src = "data:image/jpeg;base64," + b64; }); }
 
-function totalW(){ return S.sbs ? IW*2 + GAP : IW; }
-function fitView(){
-  const w = wrap.clientWidth, h = wrap.clientHeight;
-  S.zoom = Math.min(w/totalW(), h/IH) * .97;
-  S.ox = (w - totalW()*S.zoom)/2; S.oy = (h - IH*S.zoom)/2;
+function vpW(){ return S.sbs ? (wrap.clientWidth - GAP) / 2 : wrap.clientWidth; }  // viewport width
+function vpLeft(){ return S.sbs ? vpW() + GAP : 0; }   // screen x where the annotated viewport starts
+function fitOne(v){
+  const w = vpW(), h = wrap.clientHeight;
+  v.zoom = Math.min(w/IW, h/IH) * .97;
+  v.ox = (w - IW*v.zoom)/2; v.oy = (h - IH*v.zoom)/2;
 }
-function annotX(){ return S.sbs ? IW + GAP : 0; }   // x offset of annotated panel (image units)
+function fitView(){ fitOne(S.view); if (S.viewO !== S.view) fitOne(S.viewO); }
+function setLinked(on){
+  S.linked = on;
+  S.viewO = on ? S.view : {zoom:S.view.zoom, ox:S.view.ox, oy:S.view.oy};
+  render();
+}
+function panelLabel(txt, x){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.fillStyle = "rgba(5,7,10,.65)"; ctx.fillRect(x, 0, ctx.measureText(txt).width + 14, 22);
+  ctx.fillStyle = "#93a0b4"; ctx.font = "13px Segoe UI"; ctx.fillText(txt, x + 6, 16);
+}
 
 function render(){
   const w = wrap.clientWidth, h = wrap.clientHeight;
@@ -302,26 +318,34 @@ function render(){
   if (cv.height !== h) cv.height = h;
   ctx.fillStyle = "#05070a"; ctx.fillRect(0,0,w,h);
   if (!S.img) return;
-  ctx.setTransform(S.zoom,0,0,S.zoom,S.ox,S.oy);
-  ctx.imageSmoothingEnabled = S.zoom < 1;
   const op = (+$("#opacity").value)/100;
   if (S.sbs){
+    // ---- left viewport: the original image with its OWN zoom / position
+    const vo = S.viewO, vw = vpW();
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, vw, h); ctx.clip();
+    ctx.setTransform(vo.zoom,0,0,vo.zoom,vo.ox,vo.oy);
+    ctx.imageSmoothingEnabled = vo.zoom < 1;
     ctx.drawImage(S.img, 0, 0);
-    ctx.fillStyle = "#93a0b4"; ctx.font = `${14/S.zoom}px Segoe UI`;
-    ctx.fillText("original", 4, 16/S.zoom);
-    ctx.translate(annotX(), 0);
+    panelLabel(S.linked ? "original 🔗" : "original", 0);
+    ctx.restore();
+    ctx.fillStyle = "#1a2130"; ctx.fillRect(vw, 0, GAP, h);      // divider
+    ctx.save(); ctx.beginPath(); ctx.rect(vw + GAP, 0, vw, h); ctx.clip();
   }
+  // ---- annotated viewport (tools act here)
+  const V = S.view, ax = vpLeft();
+  const tf = () => ctx.setTransform(V.zoom,0,0,V.zoom,ax + V.ox,V.oy);
+  tf();
+  ctx.imageSmoothingEnabled = V.zoom < 1;
   if (S.overlay && op > 0.5) ctx.drawImage(S.overlay, 0, 0);
   else {
     ctx.drawImage(S.img, 0, 0);
     if (S.overlay && op > 0){ ctx.globalAlpha = op; ctx.drawImage(S.overlay,0,0); ctx.globalAlpha = 1; }
   }
-  if (S.sbs){ ctx.fillStyle = "#93a0b4"; ctx.font = `${14/S.zoom}px Segoe UI`;
-              ctx.fillText("annotated", 4, 16/S.zoom); }
+  if (S.sbs){ panelLabel(S.linked ? "annotated 🔗" : "annotated", ax); tf(); }
   // --- live geometry (annotated panel coordinates)
   if (S.boxStart && S.boxCur){
-    ctx.strokeStyle = S.tool === "splitbox" ? "#ffd21f" : "#4f8cff"; ctx.lineWidth = 2/S.zoom;
-    ctx.setLineDash([6/S.zoom, 4/S.zoom]);
+    ctx.strokeStyle = S.tool === "splitbox" ? "#ffd21f" : "#4f8cff"; ctx.lineWidth = 2/V.zoom;
+    ctx.setLineDash([6/V.zoom, 4/V.zoom]);
     ctx.strokeRect(Math.min(S.boxStart.x,S.boxCur.x), Math.min(S.boxStart.y,S.boxCur.y),
                    Math.abs(S.boxCur.x-S.boxStart.x), Math.abs(S.boxCur.y-S.boxStart.y));
     ctx.setLineDash([]);
@@ -329,39 +353,43 @@ function render(){
   if (S.drawing && S.stroke.length){
     const isSplit = S.tool === "splitline";
     ctx.strokeStyle = isSplit ? "#ffd21f" : (S.tool === "eraser" ? "#e63c3c" : "#fff");
-    ctx.lineWidth = isSplit ? 2/S.zoom : (+$("#brushSize").value)*2;
+    ctx.lineWidth = isSplit ? 2/V.zoom : (+$("#brushSize").value)*2;
     ctx.lineJoin = ctx.lineCap = "round"; ctx.globalAlpha = isSplit ? 1 : .4;
     ctx.beginPath(); ctx.moveTo(S.stroke[0][0], S.stroke[0][1]);
     for (const p of S.stroke) ctx.lineTo(p[0], p[1]);
     ctx.stroke(); ctx.globalAlpha = 1;
   }
   if (S.poly.length){
-    ctx.strokeStyle = "#ffd21f"; ctx.fillStyle = "rgba(255,210,31,.18)"; ctx.lineWidth = 1.5/S.zoom;
+    ctx.strokeStyle = "#ffd21f"; ctx.fillStyle = "rgba(255,210,31,.18)"; ctx.lineWidth = 1.5/V.zoom;
     ctx.beginPath(); ctx.moveTo(S.poly[0][0], S.poly[0][1]);
     for (const p of S.poly) ctx.lineTo(p[0], p[1]);
     if (S.hover) ctx.lineTo(S.hover.x, S.hover.y);
     ctx.closePath(); ctx.fill(); ctx.stroke();
-    S.poly.forEach((p, i) => { ctx.beginPath(); ctx.arc(p[0], p[1], (i ? 3 : 6)/S.zoom, 0, 7);
+    S.poly.forEach((p, i) => { ctx.beginPath(); ctx.arc(p[0], p[1], (i ? 3 : 6)/V.zoom, 0, 7);
       ctx.fillStyle = i ? "#ffd21f" : "#fff"; ctx.fill();
-      if (!i){ ctx.strokeStyle = "#ffd21f"; ctx.lineWidth = 2/S.zoom; ctx.stroke(); } });
+      if (!i){ ctx.strokeStyle = "#ffd21f"; ctx.lineWidth = 2/V.zoom; ctx.stroke(); } });
   }
   if (S.seeds.length){
     S.seeds.forEach((p, i) => {
-      ctx.beginPath(); ctx.arc(p[0], p[1], 5/S.zoom, 0, 7);
-      ctx.fillStyle = "#ffd21f"; ctx.fill(); ctx.strokeStyle = "#000"; ctx.lineWidth = 1/S.zoom; ctx.stroke();
-      ctx.fillStyle = "#000"; ctx.font = `bold ${9/S.zoom}px Segoe UI`; ctx.fillText(String(i+1), p[0]-2.5/S.zoom, p[1]+3/S.zoom);
+      ctx.beginPath(); ctx.arc(p[0], p[1], 5/V.zoom, 0, 7);
+      ctx.fillStyle = "#ffd21f"; ctx.fill(); ctx.strokeStyle = "#000"; ctx.lineWidth = 1/V.zoom; ctx.stroke();
+      ctx.fillStyle = "#000"; ctx.font = `bold ${9/V.zoom}px Segoe UI`; ctx.fillText(String(i+1), p[0]-2.5/V.zoom, p[1]+3/V.zoom);
     });
   }
   // brush cursor
   if (S.hover && (S.tool === "brush" || S.tool === "eraser") && !S.drawing){
     ctx.beginPath(); ctx.arc(S.hover.x, S.hover.y, +$("#brushSize").value, 0, 7);
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1/S.zoom; ctx.stroke();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1/V.zoom; ctx.stroke();
   }
   ctx.setTransform(1,0,0,1,0,0);
+  if (S.sbs) ctx.restore();
 }
 // screen -> annotated-panel image coords
-const toImg = e => { const r = cv.getBoundingClientRect();
-  return { x:(e.clientX-r.left-S.ox)/S.zoom - annotX(), y:(e.clientY-r.top-S.oy)/S.zoom }; };
+const toImg = e => { const r = cv.getBoundingClientRect(), V = S.view;
+  return { x:(e.clientX-r.left-vpLeft()-V.ox)/V.zoom, y:(e.clientY-r.top-V.oy)/V.zoom }; };
+// which panel is the mouse over? (original panel = left, side-by-side only)
+const inOrig = e => { const r = cv.getBoundingClientRect(); return S.sbs && (e.clientX - r.left) < vpW(); };
+const viewAt = e => inOrig(e) ? S.viewO : S.view;
 const inside = p => p.x>=0 && p.y>=0 && p.x<IW && p.y<IH;
 
 function applyRes(res){
@@ -393,6 +421,7 @@ function cancelPending(){ S.poly = []; S.seeds = []; S.boxStart = S.boxCur = nul
 async function commitPolygon(){
   if (S.poly.length < 3){ cancelPending(); return; }
   const path = S.poly.map(p => [Math.round(p[0]), Math.round(p[1])]); S.poly = [];
+  if (S.tool === "splitpoly"){ await doAct({action:"split_poly", path}, "Splitting…"); return; }
   await doAct({action:"polygon", path, cls:S.cls, to_selected:!!S.selected,
                snap:$("#optSnap").checked, steal:S.ctrlDown}, null);
 }
@@ -412,20 +441,20 @@ cv.addEventListener("contextmenu", e => {
 cv.addEventListener("wheel", e => {
   e.preventDefault();
   const f = e.deltaY < 0 ? 1.15 : 1/1.15;
-  const r = cv.getBoundingClientRect();
-  const mx = e.clientX-r.left, my = e.clientY-r.top;
-  S.ox = mx-(mx-S.ox)*f; S.oy = my-(my-S.oy)*f; S.zoom *= f; render();
+  const r = cv.getBoundingClientRect(), V = viewAt(e);
+  const mx = e.clientX-r.left-(inOrig(e) ? 0 : vpLeft()), my = e.clientY-r.top;
+  V.ox = mx-(mx-V.ox)*f; V.oy = my-(my-V.oy)*f; V.zoom *= f; render();
 }, {passive:false});
 
 cv.addEventListener("dblclick", e => {
-  if (S.tool === "polygon" && S.poly.length >= 3){ S.poly.pop(); commitPolygon(); }
+  if ((S.tool === "polygon" || S.tool === "splitpoly") && S.poly.length >= 3){ S.poly.pop(); commitPolygon(); }
   else if (S.tool === "splitpoints" && S.seeds.length >= 2){ S.seeds.pop(); commitSeeds(); }
 });
 
 cv.addEventListener("mousedown", e => {
   if (!S.img) return;
-  if (e.button === 2 || e.button === 1 || S.spaceDown || S.tool === "pan"){
-    S.panning = true; S.px = e.clientX; S.py = e.clientY; cv.style.cursor = "grabbing"; return; }
+  if (e.button === 2 || e.button === 1 || S.spaceDown || S.tool === "pan" || inOrig(e)){
+    S.panning = true; S.panView = viewAt(e); S.px = e.clientX; S.py = e.clientY; cv.style.cursor = "grabbing"; return; }
   const p = toImg(e);
   if (!inside(p)) return;
   S.ctrlDown = e.ctrlKey;
@@ -435,10 +464,10 @@ cv.addEventListener("mousedown", e => {
     S.drawing = true; S.stroke = [[p.x, p.y]]; render();
   } else if (t === "exemplar" || t === "splitbox"){
     S.boxStart = p; S.boxCur = p; S.exNeg = e.shiftKey;
-  } else if (t === "polygon"){
+  } else if (t === "polygon" || t === "splitpoly"){
     // clicking the first corner again closes the polygon
     if (S.poly.length >= 3){
-      const [fx, fy] = S.poly[0], r = 10 / S.zoom;
+      const [fx, fy] = S.poly[0], r = 10 / S.view.zoom;
       if (Math.hypot(p.x - fx, p.y - fy) <= r){ commitPolygon(); return; }
     }
     S.poly.push([p.x, p.y]); render();
@@ -449,9 +478,9 @@ cv.addEventListener("mousedown", e => {
   }
 });
 window.addEventListener("mousemove", e => {
-  if (S.panning){ S.ox += e.clientX-S.px; S.oy += e.clientY-S.py;
+  if (S.panning){ const V = S.panView || S.view; V.ox += e.clientX-S.px; V.oy += e.clientY-S.py;
                   S.px = e.clientX; S.py = e.clientY; render(); return; }
-  const p = toImg(e); S.hover = p;
+  const p = toImg(e); S.hover = inOrig(e) ? null : p;
   if (S.drawing){ S.stroke.push([p.x,p.y]); render(); }
   else if (S.boxStart){ S.boxCur = p; render(); }
   else if (S.poly.length || S.tool === "brush" || S.tool === "eraser") render();
@@ -504,21 +533,21 @@ window.addEventListener("keydown", e => {
   if (e.ctrlKey && e.key === "z"){ doAct({action:"undo"}, null); e.preventDefault(); return; }
   if (e.ctrlKey && e.key === "y"){ doAct({action:"redo"}, null); e.preventDefault(); return; }
   if (e.ctrlKey && e.key === "s"){ $("#btnSave").click(); e.preventDefault(); return; }
-  if (e.key === "Enter"){ if (S.tool === "polygon") commitPolygon(); else if (S.tool === "splitpoints") commitSeeds(); return; }
+  if (e.key === "Enter"){ if (S.tool === "polygon" || S.tool === "splitpoly") commitPolygon(); else if (S.tool === "splitpoints") commitSeeds(); return; }
   if (e.key === "Escape"){ if (S.poly.length || S.seeds.length) cancelPending(); else doAct({action:"deselect"}, null); return; }
   if (e.key === "Backspace"){ if (S.poly.length){ S.poly.pop(); render(); } else if (S.seeds.length){ S.seeds.pop(); render(); } e.preventDefault(); return; }
   if (e.key === "Delete"){ if (S.selected) doAct({action:"delete", iid:S.selected.id}, null); return; }
   if (e.key === "[" ){ $("#brushSize").value = Math.max(1, +$("#brushSize").value - 2); $("#brushSize").oninput(); }
   if (e.key === "]" ){ $("#brushSize").value = Math.min(60, +$("#brushSize").value + 2); $("#brushSize").oninput(); }
   const tools = {1:"exemplar",2:"addone",3:"polygon",4:"brush",5:"eraser",6:"select",
-                 7:"splitline",8:"splitpoints",9:"splitbox",0:"merge",d:"delete",r:"reclass",h:"pan",a:"splitauto"};
+                 7:"splitline",8:"splitpoints",9:"splitbox",0:"merge",d:"delete",r:"reclass",h:"pan",a:"splitauto",p:"splitpoly"};
   if (tools[e.key]) setTool(tools[e.key]);
   // ---- navigation
   const step = 60;
-  if (e.key === "ArrowLeft"){ S.ox += step; render(); e.preventDefault(); }
-  if (e.key === "ArrowRight"){ S.ox -= step; render(); e.preventDefault(); }
-  if (e.key === "ArrowUp"){ S.oy += step; render(); e.preventDefault(); }
-  if (e.key === "ArrowDown"){ S.oy -= step; render(); e.preventDefault(); }
+  if (e.key === "ArrowLeft"){ S.view.ox += step; render(); e.preventDefault(); }
+  if (e.key === "ArrowRight"){ S.view.ox -= step; render(); e.preventDefault(); }
+  if (e.key === "ArrowUp"){ S.view.oy += step; render(); e.preventDefault(); }
+  if (e.key === "ArrowDown"){ S.view.oy -= step; render(); e.preventDefault(); }
   if (e.key === "+" || e.key === "=") zoomBy(1.25);
   if (e.key === "-" || e.key === "_") zoomBy(1/1.25);
   if (e.key === "f"){ fitView(); render(); }
@@ -545,12 +574,12 @@ setCls(2); setTool("exemplar");
 // zoom around the centre of the canvas
 function zoomBy(f){
   const cx = wrap.clientWidth/2, cy = wrap.clientHeight/2;
-  S.ox = cx-(cx-S.ox)*f; S.oy = cy-(cy-S.oy)*f; S.zoom *= f; render();
+  S.view.ox = cx-(cx-S.view.ox)*f; S.view.oy = cy-(cy-S.view.oy)*f; S.view.zoom *= f; render();
 }
 $("#btnZoomIn").onclick = () => zoomBy(1.25);
 $("#btnZoomOut").onclick = () => zoomBy(1/1.25);
 $("#btnFit").onclick = () => { fitView(); render(); };
-$("#btnZoom1").onclick = () => zoomBy(1/S.zoom);
+$("#btnZoom1").onclick = () => zoomBy(1/S.view.zoom);
 $("#opacity").oninput = render;
 $("#brushSize").oninput = () => { $("#brushVal").textContent = $("#brushSize").value; render(); };
 $("#btnUndo").onclick = () => doAct({action:"undo"}, null);
@@ -575,6 +604,7 @@ for (const [id, key] of Object.entries(OPTS)){
   };
 }
 
+$("#optLink").onchange = () => setLinked($("#optLink").checked);
 $("#btnAgent").onclick = runAgent;
 $("#agentIn").addEventListener("keydown", e => { if (e.key === "Enter") runAgent(); });
 async function runAgent(){
@@ -750,7 +780,7 @@ document.querySelectorAll(".browse").forEach(b => b.onclick = async () => {
   if (r.path){ $("#" + b.dataset.for).value = r.path; $("#btnSaveCfg").click(); }
 });
 
-const UI_VERSION = "1.2.0";   // must match croplabel/config.py APP_VERSION
+const UI_VERSION = "1.3.0";   // must match croplabel/config.py APP_VERSION
 async function pollModel(){
   const s = await api("/api/model/status");
   if (s.version !== UI_VERSION){

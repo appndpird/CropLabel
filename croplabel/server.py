@@ -822,8 +822,17 @@ def _act(body: ActIn):
                    f"instance to paint INTO it, or use polygon to create one)")
 
     # ------------------------------------------------------------- splits
-    elif a in ("split_line", "split_points", "split_box", "split_auto"):
+    elif a in ("split_line", "split_points", "split_box", "split_auto", "split_poly"):
         iid = st.selected if st.selected in st.meta else None
+        poly = None
+        if a == "split_poly":
+            # the polygon is drawn AROUND one plant, so its corners are outside
+            # the instance: take the instance owning most pixels inside it
+            poly = editing.polygon_mask((st.h, st.w), body.path or [])
+            owners = np.bincount(st.inst[poly].ravel(), minlength=1)
+            owners[0] = 0
+            if owners.any():
+                iid = int(owners.argmax())
         if iid is None:
             # infer from the geometry: instance under the first point / box centre
             if a == "split_auto":
@@ -851,6 +860,8 @@ def _act(body: ActIn):
         elif a == "split_box":
             parts = editing.split_by_box(whole, body.box or [0, 0, 0, 0],
                                          min_px=max(5, min_px // 3))
+        elif a == "split_poly":
+            parts = editing.split_by_mask(whole, poly, min_px=max(5, min_px // 3))
         else:
             typical = typical_plant_area(st) or float(whole.sum()) / 2
             parts = editing.split_auto(whole, typical, min_px=max(5, min_px // 3),
@@ -860,6 +871,7 @@ def _act(body: ActIn):
             hint = {"split_line": "the line must cross the plant completely",
                     "split_points": "click one seed INSIDE each plant (2+)",
                     "split_box": "the box must cover part of the plant, not all",
+                    "split_poly": "the polygon must enclose part of the plant, not all of it",
                     "split_auto": "no separate crowns found — use ✂• seeds instead"}[a]
             return _response(st, f"nothing to split — {hint}")
         st.push_undo()

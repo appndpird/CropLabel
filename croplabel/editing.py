@@ -9,6 +9,7 @@ Tools implemented here:
   split_by_line       polyline cut across a merged instance -> N parts
   split_by_points     one seed click per plant -> marker watershed -> N parts
   split_by_box        box drawn inside an instance -> that part is separated
+  split_by_mask       polygon drawn around one plant of an instance -> separated
   paint_stamp         brush polyline -> mask (used for add-to-instance / erase)
 """
 import cv2
@@ -136,6 +137,19 @@ def split_by_points(inst_mask: np.ndarray, points, min_px: int = 20) -> list:
         return [inst_mask]
     leftover = inst_mask & ~np.any(parts, axis=0)
     return _grow_into(parts, leftover)
+
+
+def split_by_mask(inst_mask: np.ndarray, region: np.ndarray,
+                  min_px: int = 20) -> list:
+    """Everything of the instance inside `region` (bool mask, e.g. the
+    polygon the user drew around ONE plant of a merged instance) becomes its
+    own instance; the rest stays. Returns [inst_mask] if either side is
+    too small."""
+    a = inst_mask & region
+    b = inst_mask & ~region
+    if a.sum() < min_px or b.sum() < min_px:
+        return [inst_mask]
+    return [b, a]
 
 
 def split_by_box(inst_mask: np.ndarray, box, min_px: int = 20) -> list:
