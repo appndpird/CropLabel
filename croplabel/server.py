@@ -663,6 +663,7 @@ class ActIn(BaseModel):
     snap: bool | None = None         # polygon: keep vegetation pixels only
     steal: bool = False              # brush/polygon may take pixels of others
     n: int | None = None             # split_auto: number of plants expected
+    force_add: bool = False          # polygon: add to selected even if not touching
 
 
 _act_lock = threading.Lock()
@@ -771,9 +772,18 @@ def _act(body: ActIn):
             # if the polygon holds (almost) no vegetation, keep the raw polygon
             mask = snapped if snapped.sum() >= max(10, 0.05 * poly.sum()) else poly
         st.push_undo()
-        if body.to_selected and st.selected in st.meta:
-            n = st.grow_instance(st.selected, mask, steal=body.steal)
-            msg = f"+{n} px added to instance {st.selected}"
+        # Add to the selected instance only when the polygon actually touches
+        # it (a missed leaf) or the user forces it (Shift). A polygon drawn
+        # elsewhere is a different plant -> new instance, even though the
+        # last created instance is still selected.
+        sel = st.selected if st.selected in st.meta else None
+        touches = False
+        if sel is not None and body.to_selected:
+            near = cv2.dilate((st.inst == sel).astype(np.uint8), np.ones((7, 7), np.uint8)) > 0
+            touches = bool((mask & near).any())
+        if sel is not None and body.to_selected and (touches or body.force_add):
+            n = st.grow_instance(sel, mask, steal=body.steal)
+            msg = f"+{n} px added to instance {sel}"
         else:
             if body.steal:
                 # take the polygon area away from whoever owns it
@@ -787,7 +797,9 @@ def _act(body: ActIn):
                 st.selected = iid
                 msg = (f"polygon → new {_cls_name(body.cls or CLS_CROP)} instance {iid} "
                        f"({int((st.inst == iid).sum())} px"
-                       f"{', snapped to vegetation' if snap and mask is not poly else ''})")
+                       f"{', snapped to vegetation' if snap and mask is not poly else ''})"
+                       + (f" — not touching instance {sel}, so a separate plant; "
+                          f"hold Shift while closing to add to it" if sel is not None and body.to_selected else ""))
             else:
                 msg = ("polygon too small or fully inside existing instances "
                        "(select an instance first to add to it, or use ⌫ eraser)")

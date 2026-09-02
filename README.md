@@ -76,7 +76,7 @@ opencv, fastapi). The SAM3.1 checkpoint lives in `models/sam3.1_multiplex.pt`.
 |-------|------|-----|--------|
 | SAM | ⭐ find similar | 1 | click/box one example plant → all similar labeled as selected class; Shift = negative example |
 | SAM | ✚ add one | 2 | add just the plant under the click as one instance |
-| Create | ⬠ polygon | 3 | click the corners of a plant, double-click / Enter to finish → **new instance**. Backspace = remove corner, Esc = cancel. With *Snap polygon to vegetation* on, only green pixels inside the polygon are kept (accurate outline from a rough polygon). With an instance selected the polygon is **added to it**. |
+| Create | ⬠ polygon | 3 | click the corners of a plant, double-click / Enter to finish → **new instance**. Backspace = remove corner, Esc = cancel. With *Snap polygon to vegetation* on, only green pixels inside the polygon are kept (accurate outline from a rough polygon). A polygon that **touches** the selected instance is added to it (missed leaf); a polygon elsewhere always makes a **new instance** (hold Shift while closing to force adding). |
 | Create | 🖌 brush | 4 | with an instance **selected**: paints missing pixels **into that instance**. Without selection: semantic paint only. `Ctrl` while painting also takes pixels from neighbouring instances. `[` / `]` change size. |
 | Create | ⌫ eraser | 5 | removes pixels from the selected instance (nothing selected: erases any label to soil) |
 | Fix | ➚ select | 6 | select an instance (yellow outline). `Delete` removes it, `c` / `w` reclassify it, the floating panel offers the same. `Alt+click` selects with **any** tool. |

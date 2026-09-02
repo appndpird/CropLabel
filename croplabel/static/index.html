@@ -171,7 +171,7 @@
       </div>
       <div class="tgroup" title="Manual creation">
         <label class="small">Create</label>
-        <button class="tool" data-tool="polygon" title="POLYGON: click the corners of a plant, double-click / Enter to finish → new instance (Esc cancels, Backspace removes last corner). If an instance is selected the polygon is ADDED to it. Pixels snap to vegetation when 'snap' is on.">⬠<span class="k">3</span></button>
+        <button class="tool" data-tool="polygon" title="POLYGON: click the corners of a plant, double-click / Enter to finish → new instance (Esc cancels, Backspace removes last corner). A polygon that touches the selected instance is ADDED to it; anywhere else it becomes a new instance (Shift while closing = force add). Pixels snap to vegetation when 'snap' is on.">⬠<span class="k">3</span></button>
         <button class="tool" data-tool="brush" title="BRUSH: with an instance selected, paints missing pixels INTO that instance. Without selection paints the class only (semantic). Hold Ctrl to also take pixels from neighbouring instances.">🖌<span class="k">4</span></button>
         <button class="tool" data-tool="eraser" title="ERASER: removes pixels from the selected instance (or from any label when nothing is selected)">⌫<span class="k">5</span></button>
       </div>
@@ -275,7 +275,7 @@ const busy = (on, t) => { $("#busy").style.display = on ? "flex" : "none";
 const HINTS = {
   exemplar:"⭐ Click ONE example plant (or drag a box). SAM3 labels all similar plants as the selected class. Shift = negative example.",
   addone:"✚ Click a plant → it becomes one instance (vegetation under the click).",
-  polygon:"⬠ Click the corners of the plant. Double-click or Enter = finish, Backspace = undo corner, Esc = cancel. With an instance selected the polygon is ADDED to it.",
+  polygon:"⬠ Click the corners of the plant. Double-click or Enter = finish, Backspace = undo corner, Esc = cancel. A polygon TOUCHING the selected instance is added to it; elsewhere it makes a new instance (hold Shift while closing to force adding).",
   brush:"🖌 Select an instance first (➚ or Alt+click), then paint its missing pixels. Ctrl = also take pixels from neighbours. Without selection: semantic paint only.",
   eraser:"⌫ Paint to remove pixels from the selected instance (nothing selected = erase any label to soil).",
   select:"➚ Click an instance to select it (yellow). Then: brush adds to it · ✂ tools split it · Del deletes · c/w reclassify.",
@@ -423,7 +423,7 @@ async function commitPolygon(){
   const path = S.poly.map(p => [Math.round(p[0]), Math.round(p[1])]); S.poly = [];
   if (S.tool === "splitpoly"){ await doAct({action:"split_poly", path}, "Splitting…"); return; }
   await doAct({action:"polygon", path, cls:S.cls, to_selected:!!S.selected,
-               snap:$("#optSnap").checked, steal:S.ctrlDown}, null);
+               snap:$("#optSnap").checked, steal:S.ctrlDown, force_add:!!S.shiftDown}, null);
 }
 async function commitSeeds(){
   if (S.seeds.length < 2){ setStatus("Need at least 2 seeds — click one inside each plant."); return; }
@@ -528,6 +528,7 @@ window.addEventListener("mouseup", async e => {
   }
 });
 window.addEventListener("keydown", e => {
+  if (e.key === "Shift") S.shiftDown = true;
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
   if (e.code === "Space"){ S.spaceDown = true; e.preventDefault(); return; }
   if (e.ctrlKey && e.key === "z"){ doAct({action:"undo"}, null); e.preventDefault(); return; }
@@ -554,7 +555,8 @@ window.addEventListener("keydown", e => {
   if (e.key === "c"){ setCls(2); if (S.selected) doAct({action:"reclass", iid:S.selected.id, cls:2}, null); }
   if (e.key === "w"){ setCls(3); if (S.selected) doAct({action:"reclass", iid:S.selected.id, cls:3}, null); }
 });
-window.addEventListener("keyup", e => { if (e.code === "Space") S.spaceDown = false; });
+window.addEventListener("keyup", e => { if (e.code === "Space") S.spaceDown = false; if (e.key === "Shift") S.shiftDown = false; });
+window.addEventListener("blur", () => { S.shiftDown = false; S.spaceDown = false; });
 window.addEventListener("resize", render);
 
 function setTool(t){ if (S.tool !== t) cancelPending(); S.tool = t;
@@ -780,7 +782,7 @@ document.querySelectorAll(".browse").forEach(b => b.onclick = async () => {
   if (r.path){ $("#" + b.dataset.for).value = r.path; $("#btnSaveCfg").click(); }
 });
 
-const UI_VERSION = "1.3.0";   // must match croplabel/config.py APP_VERSION
+const UI_VERSION = "1.3.1";   // must match croplabel/config.py APP_VERSION
 async function pollModel(){
   const s = await api("/api/model/status");
   if (s.version !== UI_VERSION){
