@@ -5,8 +5,6 @@ segmentation** of crop plants, weeds and soil with SAM3.1 assistance. One crop
 species per image (barley / wheat / canola / oats / other), weeds possible,
 soil labeled fully automatically.
 
-Built from the RetinaLabel architecture (FastAPI + browser canvas + SAM3.1
-native GPU engine with text and visual-exemplar prompts).
 
 ## The agentic loop
 
